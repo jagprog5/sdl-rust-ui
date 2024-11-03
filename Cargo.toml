@@ -1,0 +1,23 @@
+[package]
+name = "tiny-sdl2-gui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# was "0.36.0" - added scale mode
+# waiting on https://github.com/Rust-SDL2/rust-sdl2/pull/1444
+sdl2 = { git = "https://github.com/jagprog5/rust-sdl2.git", features = [] }
+weak-table = { version = "0.3.2", optional = true }
+compact_str = "0.8.0"
+rayon = { version = "1.7", optional = true }
+noise = { version = "0.9.0", optional = true }
+
+[dev-dependencies]
+rand = "0.8.5"
+
+[features]
+default = ["sdl2-bundled", "sdl2-ttf", "noise", "rayon"]
+sdl2-bundled = ["sdl2/bundled"]
+sdl2-ttf = ["sdl2/ttf", "dep:weak-table"]
+noise = ["dep:noise"]
+rayon = ["dep:rayon"]
