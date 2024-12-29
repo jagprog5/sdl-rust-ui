@@ -43,7 +43,7 @@ impl Default for AspectRatioFailPolicy {
 
 /// widget for a static sdl2 texture
 pub struct Texture<'sdl> {
-    pub texture: sdl2::render::Texture<'sdl>,
+    pub texture: &'sdl sdl2::render::Texture<'sdl>,
 
     /// how should the texture be stretched / sized if the aspect ratio is not
     /// respected
@@ -65,7 +65,7 @@ pub struct Texture<'sdl> {
 }
 
 impl<'sdl> Texture<'sdl> {
-    pub fn new(texture: sdl2::render::Texture<'sdl>) -> Texture<'sdl> {
+    pub fn new(texture: &'sdl sdl2::render::Texture<'sdl>) -> Texture<'sdl> {
         Texture {
             texture: texture,
             aspect_ratio_fail_policy: Default::default(),

@@ -278,7 +278,7 @@ impl<'sdl> Widget for Border<'sdl> {
                 if width_for_child < 0. {
                     width_for_child = 0.;
                 }
-                
+
                 let mut height_for_child = pos.height() - width_sub;
                 if height_for_child < 0. {
                     height_for_child = 0.;
@@ -299,6 +299,9 @@ impl<'sdl> Widget for Border<'sdl> {
             }
             None => None,
         };
+
+        // deliberately not culling on out of bounds for UPDATE, since the
+        // contained widget could still have functionality even if off screen
         self.contains.update(event.sub_event(position_for_child))?;
         Ok(())
     }
@@ -311,45 +314,54 @@ impl<'sdl> Widget for Border<'sdl> {
                 return Ok(());
             }
         };
+        
+        let cache = self.texture.take().filter(|_texture| {
+            self.prior_render_w_h.0 == pos.width() as u32
+                && self.prior_render_w_h.1 == pos.height() as u32
+        });
 
-        if self.prior_render_w_h.0 == pos.width() as u32
-            && self.prior_render_w_h.1 == pos.height() as u32
-            && self.texture.is_some()
-        {
-            // texture can be reused
-        } else {
-            // must re-render the texture before use.
-            self.prior_render_w_h = (pos.width() as u32, pos.height() as u32); // set here and not at end. don't retry on fail
-
-            // maybe? slightly easier on memory to free old texture before creating new one
-            self.texture = None;
-            let mut texture = self
-                .creator
-                .create_texture_target(PixelFormatEnum::ARGB8888, pos.width() as u32, pos.height() as u32)
-                .map_err(|e| e.to_string())?;
-            // the border is drawn over top of the contained texture. but the
-            // transparent part in the middle should still show through
-            texture.set_blend_mode(sdl2::render::BlendMode::Blend);
-
-            let mut e_out: Option<String> = None;
-
-            event
-                .canvas
-                .with_texture_canvas(&mut texture, |canvas| {
-                    canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
-                    canvas.clear(); // required to prevent flickering
-
-                    if let Err(e) = self.style.draw(canvas) {
-                        e_out = Some(e);
-                    }
-                })
-                .map_err(|e| e.to_string())?;
-
-            if let Some(e) = e_out {
-                return Err(e);
+        let texture = match cache {
+            Some(v) => {
+                v // texture can be reused
             }
+            None => {
+                // must re-render the texture before use.
+                self.prior_render_w_h = (pos.width() as u32, pos.height() as u32); // set here and not at end. don't retry on fail
 
-            self.texture = Some(texture);
+                // maybe? slightly easier on memory to free old texture before creating new one
+                // self.texture = None;
+                let mut texture = self
+                    .creator
+                    .create_texture_target(
+                        PixelFormatEnum::ARGB8888,
+                        pos.width() as u32,
+                        pos.height() as u32,
+                    )
+                    .map_err(|e| e.to_string())?;
+                // the border is drawn over top of the contained texture. but the
+                // transparent part in the middle should still show through
+                texture.set_blend_mode(sdl2::render::BlendMode::Blend);
+
+                let mut e_out: Option<String> = None;
+
+                event
+                    .canvas
+                    .with_texture_canvas(&mut texture, |canvas| {
+                        canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
+                        canvas.clear(); // required to prevent flickering
+
+                        if let Err(e) = self.style.draw(canvas) {
+                            e_out = Some(e);
+                        }
+                    })
+                    .map_err(|e| e.to_string())?;
+
+                if let Some(e) = e_out {
+                    return Err(e);
+                }
+
+                texture
+            }
         };
 
         // same calc as was used by update
@@ -358,7 +370,7 @@ impl<'sdl> Widget for Border<'sdl> {
         if width_for_child < 0. {
             width_for_child = 0.;
         }
-        
+
         let mut height_for_child = pos.height() - width_sub;
         if height_for_child < 0. {
             height_for_child = 0.;
@@ -382,11 +394,13 @@ impl<'sdl> Widget for Border<'sdl> {
         // all of the positioning and sizing is kept in float form, but once
         // drawing occurs it should draw at integer coordinates. it is expected
         // that the child will do the same (as should all widgets)
-        // 
-        // TODO remove unwrap (always ok) - would require code restructure
-        event
-            .canvas
-            .copy(self.texture.as_ref().unwrap(), None, Some(frect_to_rect(pos)))?;
+        event.canvas.copy(
+            &texture,
+            None,
+            Some(frect_to_rect(pos)),
+        )?;
+
+        self.texture = Some(texture);
 
         Ok(())
     }

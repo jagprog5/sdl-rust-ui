@@ -1,12 +1,7 @@
 use std::cell::Cell;
 
 use sdl2::{
-    keyboard::Keycode,
-    mouse::MouseButton,
-    pixels::{Color, PixelFormatEnum},
-    rect::Point,
-    render::{Canvas, Texture, TextureCreator},
-    video::{Window, WindowContext},
+    keyboard::Keycode, mouse::MouseButton, pixels::{Color, PixelFormatEnum}, rect::Point, render::{Canvas, Texture, TextureCreator}, video::{Window, WindowContext}
 };
 
 use crate::util::{
@@ -257,7 +252,7 @@ pub struct CheckBox<'sdl, 'state> {
     pub focus_id: FocusID,
     pressed: bool,
 
-    style: Box<dyn TextureVariantStyle<CheckBoxTextureVariant> +'sdl>,
+    style: Box<dyn TextureVariantStyle<CheckBoxTextureVariant> + 'sdl>,
     pub size: f32,
     creator: &'sdl TextureCreator<WindowContext>,
     idle: TextureVariantSizeCache<'sdl, CheckBoxTextureVariant>,
@@ -347,6 +342,25 @@ where
                     }
                 }
             }
+            sdl2::event::Event::MouseMotion {
+                mousestate, x, y, ..
+            } => {
+                if !mousestate.left() {
+                    continue;
+                }
+                if position.contains_point((x, y)) {
+                    // ignore mouse events out of scroll area
+                    if event
+                        .canvas
+                        .clip_rect()
+                        .map(|clip_rect| !clip_rect.contains_point((x, y)))
+                        .unwrap_or(false)
+                    {
+                        continue;
+                    }
+                    *pressed = true;
+                }
+            }
             sdl2::event::Event::MouseButtonDown {
                 mouse_btn: MouseButton::Left,
                 x,
@@ -356,6 +370,16 @@ where
                 // ok even if not focused (button click works even if no
                 // focus manager is used at all)
                 if position.contains_point((x, y)) {
+                    // ignore mouse events out of scroll area
+                    if event
+                        .canvas
+                        .clip_rect()
+                        .map(|clip_rect| !clip_rect.contains_point((x, y)))
+                        .unwrap_or(false)
+                    {
+                        continue;
+                    }
+
                     sdl_event.set_consumed();
                     if let Some(focus_manager) = &mut event.focus_manager {
                         focus_manager.set_focus(focus_id);
@@ -372,6 +396,16 @@ where
                 // ok even if not focused (button click works even if no
                 // focus manager is used at all)
                 if position.contains_point((x, y)) {
+                    // ignore mouse events out of scroll area
+                    if event
+                        .canvas
+                        .clip_rect()
+                        .map(|clip_rect| !clip_rect.contains_point((x, y)))
+                        .unwrap_or(false)
+                    {
+                        continue;
+                    }
+
                     match functionality() {
                         Ok(()) => (),
                         Err(e) => return Err(e),
@@ -413,7 +447,10 @@ impl<'sdl, 'state> Widget for CheckBox<'sdl, 'state> {
 
         let position = frect_to_rect(position);
 
-        let focused = event.focus_manager.map(|f| f.is_focused(self.focus_id)).unwrap_or(false);
+        let focused = event
+            .focus_manager
+            .map(|f| f.is_focused(self.focus_id))
+            .unwrap_or(false);
         let checked = self.checked.get();
         let pressed = self.pressed;
 

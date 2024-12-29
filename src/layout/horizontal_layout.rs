@@ -12,6 +12,7 @@ use super::vertical_layout::MajorAxisMaxLenPolicy;
 
 pub struct HorizontalLayout<'sdl> {
     pub elems: Vec<Box<dyn Widget + 'sdl>>,
+    pub preferred_w: PreferredPortion,
     pub preferred_h: PreferredPortion,
     pub min_w_fail_policy: MinLenFailPolicy,
     pub max_w_fail_policy: MaxLenFailPolicy,
@@ -27,6 +28,7 @@ impl<'sdl> Default for HorizontalLayout<'sdl> {
     fn default() -> Self {
         Self {
             elems: Default::default(),
+            preferred_w: Default::default(),
             preferred_h: Default::default(),
             min_w_fail_policy: Default::default(),
             max_w_fail_policy: Default::default(),
@@ -189,6 +191,10 @@ macro_rules! impl_widget_fn {
 }
 
 impl<'sdl> Widget for HorizontalLayout<'sdl> {
+    fn preferred_portion(&self) -> (PreferredPortion, PreferredPortion) {
+        (self.preferred_w, self.preferred_h)    
+    }
+
     fn min(&mut self) -> Result<(MinLen, MinLen), String> {
         let w_view_children = match self.min_w_policy {
             MinLenPolicy::Children => None,

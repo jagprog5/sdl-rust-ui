@@ -57,27 +57,23 @@ impl FocusManager {
                     v = 0;
                 }
                 v
-            },
+            }
         });
     }
 
     pub fn set_previous_focused(&mut self) {
         let last = self.next_available.checked_sub(1).unwrap_or(0);
         self.current_focus = Some(match self.current_focus {
-            None => {
-                last
-            },
-            Some(v) => {
-                v.checked_sub(1).unwrap_or(last)
-            },
+            None => last,
+            Some(v) => v.checked_sub(1).unwrap_or(last),
         });
     }
 
     /// handle default behavior for how focus should change given the events:
     /// - tab goes to next, shift + tab goes to previous
     /// - mouse moved on/off widget gains/loses focus
-    /// 
-    /// this function will consume tab events
+    ///
+    /// this function may consume tab events
     pub fn default_widget_focus_behavior(my_focus_id: FocusID, event: &mut WidgetEvent) {
         let focus_manager = match &mut event.focus_manager {
             Some(v) => v,
@@ -91,7 +87,15 @@ impl FocusManager {
                         // as always, snap to integer grid before rendering /
                         // using
                         let position = frect_to_rect(position);
-                        if position.contains_point((x,y)) {
+                        // ignore mouse events out position bounds and out of of
+                        // scroll area clipping rect
+                        if position.contains_point((x, y))
+                            && event
+                                .canvas
+                                .clip_rect()
+                                .map(|clip_rect| clip_rect.contains_point((x, y)))
+                                .unwrap_or(true)
+                        {
                             has_point = true;
                         }
                     }
@@ -101,7 +105,7 @@ impl FocusManager {
                     } else {
                         focus_manager.unfocus(my_focus_id);
                     }
-                },
+                }
                 sdl2::event::Event::KeyDown {
                     repeat: false,
                     keycode: Some(Keycode::Tab),
@@ -119,7 +123,7 @@ impl FocusManager {
                         // tab was pressed
                         focus_manager.set_next_focused();
                     }
-                },
+                }
                 _ => {}
             }
         }
@@ -127,7 +131,7 @@ impl FocusManager {
 
     /// how should the focus manager itself handle focus, irrespective of any
     /// focusable widgets
-    /// 
+    ///
     /// this will consume tab events
     pub fn default_start_focus_behavior(&mut self, events: &mut [SDLEvent]) {
         if let Some(_) = self.current_focus {
@@ -149,7 +153,7 @@ impl FocusManager {
                         // tab was pressed
                         self.set_next_focused();
                     }
-                },
+                }
                 _ => {}
             }
         }

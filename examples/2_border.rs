@@ -19,7 +19,7 @@ fn main() -> std::process::ExitCode {
 
     let surface = fancy_surface::and();
     let texture = sdl.texture_creator.create_texture_from_surface(surface).expect("err create texture");
-    let mut texture_widget = Texture::new(texture);
+    let mut texture_widget = Texture::new(&texture);
     texture_widget.request_aspect_ratio = false;
     texture_widget.aspect_ratio_fail_policy = AspectRatioFailPolicy::Stretch;
     texture_widget.min_w_policy = MinLenPolicy::Literal(MinLen::LAX);

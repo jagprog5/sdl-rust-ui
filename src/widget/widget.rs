@@ -178,15 +178,14 @@ macro_rules! generate_gui_function {
                 aspect_ratio_priority,
             )?;
 
-            let mut widget_event = WidgetEvent {
+            let widget_event = WidgetEvent {
                 position,
                 events,
                 canvas,
                 aspect_ratio_priority: AspectRatioPreferredDirection::default(),
                 focus_manager,
             };
-            let widget_event_dup = widget_event.dup();
-            widget.$widget_action(widget_event_dup)
+            widget.$widget_action(widget_event)
         }
     };
 }

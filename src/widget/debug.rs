@@ -143,8 +143,8 @@ impl Widget for Debug {
 
         let mut color_to_use = Color::RED;
 
-        for event in event.events.iter_mut().filter(|e| e.available()) {
-            match event.e {
+        for e in event.events.iter_mut().filter(|e| e.available()) {
+            match e.e {
                 sdl2::event::Event::MouseButtonUp {
                     x,
                     y,
@@ -152,7 +152,13 @@ impl Widget for Debug {
                     ..
                 } => {
                     if pos.contains_point((x, y)) {
-                        event.set_consumed();
+                        // ignore mouse events out of scroll area
+                        if event.canvas.clip_rect().map(|clip_rect| {
+                            !clip_rect.contains_point((x, y))
+                        }).unwrap_or(false) {
+                            continue;
+                        }
+                        e.set_consumed();
                         color_to_use = Color::GREEN;
                         println!("debug rect at {:?} was clicked!", pos);
                     }

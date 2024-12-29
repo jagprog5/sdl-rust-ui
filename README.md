@@ -33,6 +33,7 @@ Layouts:
  - [vertical layout](./src/layout/vertical_layout.rs)
  - [horizontal layout](./src/layout/horizontal_layout.rs)
  - [stacked layout](./src/layout/stacked_layout.rs)
+ - [scroll area](./src/layout/scroller.rs)
 
 Widgets
  - [debug](./src/widget/debug.rs), for testing sizing
@@ -45,6 +46,8 @@ Widgets
 
 ## TODO
 
+- vertical + horizontal scroll bar widget
+- multiline text display widget
 - text input widget
 - audio
 - (maybe) better default style

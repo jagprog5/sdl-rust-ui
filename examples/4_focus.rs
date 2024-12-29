@@ -2,7 +2,7 @@
 use std::{cell::Cell, fs::File, io::Read, path::Path};
 
 use sdl2::pixels::Color;
-use tiny_sdl2_gui::{layout::{horizontal_layout::HorizontalLayout, vertical_layout::VerticalLayout}, util::{focus::FocusManager, font::{FontManager, TextRenderType, TextRenderer}, length::{MaxLen, MaxLenPolicy}}, widget::{button::{Button, DefaultButtonStyle}, checkbox::{CheckBox, DefaultCheckBoxStyle}, label::{DefaultLabelState, Label}, widget::{draw_gui, update_gui, SDLEvent}}};
+use tiny_sdl2_gui::{layout::{horizontal_layout::HorizontalLayout, scroller::Scroller, vertical_layout::VerticalLayout}, util::{focus::FocusManager, font::{FontManager, TextRenderType, TextRenderer}, length::{MaxLen, MaxLenPolicy}}, widget::{button::{Button, DefaultButtonStyle}, checkbox::{CheckBox, DefaultCheckBoxStyle}, label::{DefaultLabelState, Label}, widget::{draw_gui, update_gui, SDLEvent}}};
 
 #[path = "example_common/mod.rs"]
 mod example_common;
@@ -30,7 +30,7 @@ fn main() -> std::process::ExitCode {
         FontManager::new(&ttf_context, &font_file_contents).unwrap(),
     ));
 
-    let mut sdl = example_common::sdl_util::SDLSystems::new("shift tab! mouse!", (WIDTH, HEIGHT)).unwrap();
+    let mut sdl = example_common::sdl_util::SDLSystems::new("tab, mouse, scroll", (WIDTH, HEIGHT)).unwrap();
     let mut focus_manager = FocusManager::default();
 
     let button_text = DefaultLabelState{ inner: Cell::new("button".into()) };
@@ -69,6 +69,12 @@ fn main() -> std::process::ExitCode {
 
     layout.elems.push(Box::new(button));
 
+    let scroll_x = Cell::new(0i32);
+    let scroll_y = Cell::new(0i32);
+
+    layout.preferred_w = tiny_sdl2_gui::util::length::PreferredPortion(0.5);
+    let mut scroller = Scroller::new(true, true, &scroll_x, &scroll_y, Box::new(layout));
+
     let mut events_accumulator: Vec<SDLEvent> = Vec::new();
     'running: loop {
         for event in sdl.event_pump.poll_iter() {
@@ -89,7 +95,7 @@ fn main() -> std::process::ExitCode {
         let empty = events_accumulator.len() == 0; // lower cpu usage when idle
 
         if !empty {
-            match update_gui(&mut layout, &mut sdl.canvas, &mut events_accumulator, Some(&mut focus_manager)) {
+            match update_gui(&mut scroller, &mut sdl.canvas, &mut events_accumulator, Some(&mut focus_manager)) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
@@ -97,7 +103,7 @@ fn main() -> std::process::ExitCode {
             }
             sdl.canvas.set_draw_color(background_color.get());
             sdl.canvas.clear();
-            match draw_gui(&mut layout, &mut sdl.canvas, &mut events_accumulator, Some(&mut focus_manager)) {
+            match draw_gui(&mut scroller, &mut sdl.canvas, &mut events_accumulator, Some(&mut focus_manager)) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
