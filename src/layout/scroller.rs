@@ -1,11 +1,20 @@
 use std::cell::Cell;
 
-use sdl2::mouse::MouseButton;
+use sdl2::{mouse::MouseButton, rect::Rect, render::ClippingRect};
 
 use crate::{
     util::length::frect_to_rect,
-    widget::widget::{Widget, WidgetEvent},
+    widget::widget::{ConsumedStatus, Widget, WidgetEvent},
 };
+
+#[derive(Debug)]
+enum DragState {
+    None,
+    /// waiting for mouse to move far enough before beginning dragging
+    DragStart((i32, i32)),
+    /// contains drag diff
+    Dragging((i32, i32)),
+}
 
 /// translates its content - facilitates scrolling
 ///
@@ -14,17 +23,24 @@ use crate::{
 /// the responsibility of the contained widgets themselves to cull if they
 /// choose to
 ///
-/// it is the responsibility of the contained widget to filter out mouse
-/// events which are not within the clipping rectangle (which is set for
-/// both draw, as well as update, for convenience)
+/// it is the responsibility of the contained widget to filter out mouse events
+/// which are not within the sdl clipping rectangle (which is set for both draw,
+/// as well as update, for convenience)
+///
+/// all sizing is inherited from the contained widget
 pub struct Scroller<'sdl, 'state> {
     /// for drag scrolling
-    drag_diff: Option<(i32, i32)>,
+    drag_state: DragState,
+    /// how many pixels to move per unit of received mouse wheel
+    pub mouse_wheel_sensitivity: i32,
+    /// manhattan distance that the mouse must travel before it's considered a
+    /// click and drag scroll
+    pub drag_deadzone: u32,
     pub scroll_x_enabled: bool,
     pub scroll_y_enabled: bool,
     pub scroll_x: &'state Cell<i32>,
     pub scroll_y: &'state Cell<i32>,
-    pub contains: Box<dyn Widget + 'sdl>,
+    pub contains: &'sdl mut dyn Widget,
 }
 
 impl<'sdl, 'state> Scroller<'sdl, 'state> {
@@ -33,16 +49,46 @@ impl<'sdl, 'state> Scroller<'sdl, 'state> {
         scroll_y_enabled: bool,
         scroll_x: &'state Cell<i32>,
         scroll_y: &'state Cell<i32>,
-        contains: Box<dyn Widget + 'sdl>,
+        contains: &'sdl mut dyn Widget,
     ) -> Self {
         Self {
-            drag_diff: None,
+            drag_state: DragState::None,
+            mouse_wheel_sensitivity: 7,
+            drag_deadzone: 10,
             scroll_x_enabled,
             scroll_y_enabled,
             scroll_x,
             scroll_y,
             contains,
         }
+    }
+}
+
+fn clipping_rect_intersection(existing_clipping_rect: ClippingRect, position: Option<Rect>) -> ClippingRect {
+    match position {
+        Some(position) => {
+            match existing_clipping_rect {
+                ClippingRect::Some(rect) => {
+                    match rect.intersection(position) {
+                        Some(v) => {
+                            ClippingRect::Some(v)
+                        },
+                        None => ClippingRect::Zero,
+                    }
+                },
+                ClippingRect::Zero => {
+                    ClippingRect::Zero
+                },
+                ClippingRect::None => {
+                    // clipping rect has infinite area, so it's just whatever position is
+                    ClippingRect::Some(position)
+                },
+            }
+        },
+        None => {
+            // position is zero area so intersection result is zero
+            ClippingRect::Zero
+        },
     }
 }
 
@@ -97,121 +143,185 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
     }
 
     fn update(&mut self, mut event: WidgetEvent) -> Result<(), String> {
-        // translate all mouse events before sending to contained widget
+        if let DragState::Dragging(_) = self.drag_state {
+            // consume related events if currently dragging. do this before
+            // passing event to contained
+            event
+                .events
+                .iter_mut()
+                .filter(|e| e.available())
+                .for_each(|e| match e.e {
+                    sdl2::event::Event::MouseButtonDown { .. }
+                    | sdl2::event::Event::MouseMotion { .. }
+                    | sdl2::event::Event::MouseButtonUp { .. } => {
+                        e.set_consumed();
+                    }
+                    _ => {}
+                });
+        }
+
+        // translate events before sending to contained. then translate back again when done
         let scroll_x = self.scroll_x.get();
         let scroll_y = self.scroll_y.get();
-
-        event.events.iter_mut().filter(|e| e.available()).for_each(|e| {
-            match e.e {
-                sdl2::event::Event::MouseMotion {
-                    mousestate, x, y, ..
-                } => {
-                    if let Some(drag_diff) = self.drag_diff {
-                        if mousestate.left() {
-                            // happen before update on contained widget.
-                            // otherwise small rounding differences could cause
-                            // the focus indicator to flicker when clicking and
-                            // dragging close to a contained widget
-                            e.set_consumed();
-                            if self.scroll_x_enabled {
-                                self.scroll_x.set(x + drag_diff.0);
-                            }
-                            if self.scroll_y_enabled {
-                                self.scroll_y.set(y + drag_diff.1);
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            };
-        });
-
-        event
-            .canvas
-            .set_clip_rect(event.position.map(|frect| frect_to_rect(frect)));
+        
+        let previous_clipping_rect = event.canvas.clip_rect();
+        let clipping_rect = clipping_rect_intersection(previous_clipping_rect, frect_to_rect(event.position));
+        event.canvas.set_clip_rect(clipping_rect);
         event.position.as_mut().map(|position| {
             position.x += scroll_x as f32;
             position.y += scroll_y as f32;
         });
-
-        let update_results = self.contains.update(event.dup());
-        event.canvas.set_clip_rect(None);
-
+        let update_result = self.contains.update(event.dup());
+        event.canvas.set_clip_rect(previous_clipping_rect); // restore
         event.position.as_mut().map(|position| {
             position.x -= scroll_x as f32;
             position.y -= scroll_y as f32;
         });
 
-        update_results?;
+        // handle mouse wheel. happens after update, as it allows contained
+        // to consume it first (for example, with nested scrolls)
+        event
+            .events
+            .iter_mut()
+            .filter(|e| match e.consumed_status() {
+                // only look at not consumed by layout
+                ConsumedStatus::ConsumedByLayout => false,
+                _ => true,
+            })
+            .for_each(|e| match e.e {
+                // mouse wheel logic
+                sdl2::event::Event::MouseWheel {
+                    x,
+                    y,
+                    mouse_x,
+                    mouse_y,
+                    direction,
+                    ..
+                } => {
+                    let multiplier: i32 = match direction {
+                        sdl2::mouse::MouseWheelDirection::Flipped => -1,
+                        _ => 1,
+                    };
 
-        event.events.iter_mut().filter(|e| e.available()).for_each(|e| {
-            match e.e {
-                // accumulating MouseMotion xrel yrel is not sufficient (is
-                // reported as integers, which leads to a large drift from
-                // rounding over mouse drag)
-                //
-                // click and drag scrolling
+                    // only look at wheel when mouse over scroll area
+                    if frect_to_rect(event
+                        .position)
+                        .map(|pos|pos.contains_point((mouse_x, mouse_y)))
+                        .unwrap_or(false)
+                    {
+                        let point_contained_in_clipping_rect = match clipping_rect {
+                            sdl2::render::ClippingRect::Some(rect) => rect.contains_point((mouse_x, mouse_y)),
+                            sdl2::render::ClippingRect::Zero => false,
+                            sdl2::render::ClippingRect::None => true,
+                        };
+                        if !point_contained_in_clipping_rect {
+                            return;
+                        }
+                        e.set_consumed_by_layout();
+                        if self.scroll_x_enabled {
+                            self.scroll_x
+                                .set(self.scroll_x.get() - multiplier * x * self.mouse_wheel_sensitivity);
+                        }
+                        if self.scroll_y_enabled {
+                            self.scroll_y
+                                .set(self.scroll_y.get() - multiplier * y * self.mouse_wheel_sensitivity);
+                        }
+                    }
+                }
+                sdl2::event::Event::MouseButtonUp {
+                    mouse_btn: MouseButton::Left,
+                    ..
+                } => match self.drag_state {
+                    DragState::None => {}
+                    _ => {
+                        self.drag_state = DragState::None;
+                        e.set_consumed_by_layout();
+                    }
+                },
+                // on mouse down, log the position and wait for drag start
                 sdl2::event::Event::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
                     x,
                     y,
                     ..
                 } => {
-                    if event.position.map(|pos| frect_to_rect(pos).contains_point((x, y))).unwrap_or(false) {
-                        self.drag_diff = Some((scroll_x - x, scroll_y - y));
+                    if frect_to_rect(event
+                        .position)
+                        .map(|pos|pos.contains_point((x, y)))
+                        .unwrap_or(false)
+                    {
+                        let point_contained_in_clipping_rect = match clipping_rect {
+                            sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
+                            sdl2::render::ClippingRect::Zero => false,
+                            sdl2::render::ClippingRect::None => true,
+                        };
+                        if !point_contained_in_clipping_rect {
+                            return;
+                        }
+                        e.set_consumed_by_layout();
+                        if let DragState::None = self.drag_state {
+                            self.drag_state = DragState::DragStart((x, y));
+                        }
                     }
                 }
-                sdl2::event::Event::MouseButtonUp {
-                    mouse_btn: MouseButton::Left,
-                    ..
+                // on mouse motion apply mouse drag.
+                sdl2::event::Event::MouseMotion {
+                    x, y, mousestate, ..
                 } => {
-                    self.drag_diff = None;
-                }
-                // mouse wheel scrolling
-                sdl2::event::Event::MouseWheel {
-                    x,
-                    y,
-                    mouse_x,
-                    mouse_y,
-                    ..
-                } => {
-                    if event.position.map(|pos| frect_to_rect(pos).contains_point((mouse_x, mouse_y))).unwrap_or(false) {
-                        e.set_consumed();
-                        if self.scroll_x_enabled {
-                            self.scroll_x.set(scroll_x - x * 7);
+                    if !mousestate.left() {
+                        self.drag_state = DragState::None;
+                        // intentional fallthrough
+                    }
+                    if let DragState::None = self.drag_state {
+                        return;
+                    }
+                    if let DragState::DragStart((start_x, start_y)) = self.drag_state {
+                        let dragged_far_enough_x =
+                            (start_x - x).abs() as u32 > self.drag_deadzone;
+                        let dragged_far_enough_y =
+                            (start_y - y).abs() as u32 > self.drag_deadzone;
+                        let trigger_x = dragged_far_enough_x && self.scroll_x_enabled;
+                        let trigger_y = dragged_far_enough_y && self.scroll_y_enabled;
+                        if trigger_x || trigger_y {
+                            self.drag_state = DragState::Dragging((
+                                x - self.scroll_x.get(),
+                                y - self.scroll_y.get(),
+                            ));
+                            // intentional fallthrough
                         }
-                        if self.scroll_y_enabled {
-                            self.scroll_y.set(scroll_y + y * 7);
-                        }
+                    }
+
+                    if let DragState::Dragging((drag_x, drag_y)) = self.drag_state {
+                        e.set_consumed_by_layout();
+                        self.scroll_x.set(x - drag_x);
+                        self.scroll_y.set(y - drag_y);
                     }
                 }
                 _ => {}
-            }
-        });
+            });
 
-        Ok(())
+        update_result
     }
 
     fn draw(&mut self, mut event: WidgetEvent) -> Result<(), String> {
-        // translate all mouse events before sending to contained widget
+        // translate events before sending to contained. then translate back again when done
         let scroll_x = self.scroll_x.get();
         let scroll_y = self.scroll_y.get();
-
-        event.canvas.set_clip_rect(event.position.map(|pos| frect_to_rect(pos)));
+        
+        let previous_clipping_rect = event.canvas.clip_rect();
+        let clipping_rect = clipping_rect_intersection(previous_clipping_rect, frect_to_rect(event.position));
+        event.canvas.set_clip_rect(clipping_rect);
         event.position.as_mut().map(|position| {
             position.x += scroll_x as f32;
             position.y += scroll_y as f32;
         });
-
         let draw_result = self.contains.draw(event.dup());
-        event.canvas.set_clip_rect(None);
-
+        event.canvas.set_clip_rect(previous_clipping_rect); // restore
         event.position.as_mut().map(|position| {
             position.x -= scroll_x as f32;
             position.y -= scroll_y as f32;
         });
-
-        draw_result?;
-        Ok(())
+        
+        draw_result
     }
 }

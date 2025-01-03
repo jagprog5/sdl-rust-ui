@@ -8,30 +8,63 @@ use crate::util::{
     },
 };
 
+#[derive(Debug, Clone, Copy)]
+pub enum ConsumedStatus {
+    /// this event has not been consumed by any widget
+    None,
+
+    /// this event has been consumed by a non-layout widget. for the most part,
+    /// it should be considered consumed, but it might still be used by layouts
+    /// (e.g. scroller)
+    ConsumedByWidget,
+
+    /// this event has been consumed by a layout, and should not be used by
+    /// anything else
+    ConsumedByLayout,
+}
+
 pub struct SDLEvent {
     pub e: sdl2::event::Event,
-    /// indicates if this event was consumed by a widget (indicating it should
-    /// not be used by other things)
-    consumed_status: bool,
+    consumed_status: ConsumedStatus,
 }
 
 impl SDLEvent {
-    pub fn set_consumed(&mut self) {
-        self.consumed_status = true;
-    }
-
     pub fn consumed(&self) -> bool {
-        self.consumed_status
+        match self.consumed_status {
+            ConsumedStatus::None => false,
+            _ => true
+        }
     }
 
     pub fn available(&self) -> bool {
-        !self.consumed_status
+        !self.consumed()
+    }
+
+    pub fn consumed_status(&self) -> ConsumedStatus {
+        self.consumed_status
+    }
+
+    pub fn set_consumed(&mut self) {
+        // shouldn't be consumed twice
+        debug_assert!(match self.consumed_status {
+            ConsumedStatus::None => true,
+            _ => false,
+        });
+        self.consumed_status = ConsumedStatus::ConsumedByWidget;
+    }
+
+    pub fn set_consumed_by_layout(&mut self) {
+        debug_assert!(match self.consumed_status {
+            ConsumedStatus::ConsumedByLayout => false,
+            _ => true,
+        });
+        self.consumed_status = ConsumedStatus::ConsumedByLayout;
     }
 
     pub fn new(e: sdl2::event::Event) -> Self {
         Self {
             e,
-            consumed_status: false,
+            consumed_status: ConsumedStatus::None,
         }
     }
 }
@@ -150,7 +183,11 @@ pub trait Widget {
         Ok(())
     }
 
-    /// draw thyself
+
+    /// draw self and update state. called each frame after update
+    /// 
+    /// state which might be viewed between widgets should instead be updated in
+    /// update
     fn draw(&mut self, event: WidgetEvent) -> Result<(), String>;
 }
 

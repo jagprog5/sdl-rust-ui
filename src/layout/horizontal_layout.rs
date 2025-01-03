@@ -11,7 +11,7 @@ use crate::{
 use super::vertical_layout::MajorAxisMaxLenPolicy;
 
 pub struct HorizontalLayout<'sdl> {
-    pub elems: Vec<Box<dyn Widget + 'sdl>>,
+    pub elems: Vec<&'sdl mut dyn Widget>,
     pub preferred_w: PreferredPortion,
     pub preferred_h: PreferredPortion,
     pub min_w_fail_policy: MinLenFailPolicy,
@@ -120,7 +120,7 @@ macro_rules! impl_widget_fn {
 
                 if self.elems.len() == 1 {
                     let position = crate::widget::widget::place(
-                        self.elems[0].as_mut(),
+                        self.elems[0],
                         position,
                         crate::util::length::AspectRatioPreferredDirection::HeightFromWidth,
                     )?;

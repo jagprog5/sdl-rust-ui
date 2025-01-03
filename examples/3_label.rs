@@ -66,7 +66,7 @@ fn main() -> std::process::ExitCode {
     // ======================== BOTTOM LABELS ==================================
     
     let bottom_left_label_text = CompactString::from("horizontal");
-    let bottom_left_label = Label::new(
+    let mut bottom_left_label = Label::new(
         &bottom_left_label_text,
         TextRenderType::Blended(Color::WHITE),
         Box::new(TextRenderer::new(&font_manager)),
@@ -98,20 +98,21 @@ fn main() -> std::process::ExitCode {
 
     let mut rng = rand::thread_rng();
     let random_number: u32 = rng.gen();
+
     #[cfg(feature = "noise")]
-    {
-        let mut noise_background = SoftwareRenderBackground::new(Wood::new(random_number), &sdl.texture_creator);
-        noise_background.set_color_mod((200, 200, 200)); // dim a bit
-        top_layout.elems.push(Box::new(noise_background));
+    let mut noise_background = SoftwareRenderBackground::new(Wood::new(random_number), &sdl.texture_creator);
+    #[cfg(feature = "noise")]
+    noise_background.set_color_mod((200, 200, 200)); // dim a bit
+    #[cfg(feature = "noise")]
+    top_layout.elems.push(&mut noise_background);
 
-    }
-    top_layout.elems.push(Box::new(top_label));
-    layout.elems.push(Box::new(top_layout));
-    layout.elems.push(Box::new(middle_label));
+    top_layout.elems.push(&mut top_label);
+    layout.elems.push(&mut top_layout);
+    layout.elems.push(&mut middle_label);
 
-    bottom_layout.elems.push(Box::new(bottom_left_label));
-    bottom_layout.elems.push(Box::new(bottom_right_label));
-    layout.elems.push(Box::new(bottom_layout));
+    bottom_layout.elems.push(&mut bottom_left_label);
+    bottom_layout.elems.push(&mut bottom_right_label);
+    layout.elems.push(&mut bottom_layout);
 
     let mut events_accumulator: Vec<SDLEvent> = Vec::new();
     'running: loop {

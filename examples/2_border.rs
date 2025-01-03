@@ -25,7 +25,7 @@ fn main() -> std::process::ExitCode {
     texture_widget.min_w_policy = MinLenPolicy::Literal(MinLen::LAX);
     texture_widget.min_h_policy = MinLenPolicy::Literal(MinLen::LAX);
 
-    let mut border = Border::new(Box::new(texture_widget), &sdl.texture_creator, Box::new(Bevel::new()));
+    let mut border = Border::new(&mut texture_widget, &sdl.texture_creator, Box::new(Bevel::new()));
 
     let mut events_accumulator: Vec<SDLEvent> = Vec::new();
     'running: loop {

@@ -56,7 +56,7 @@ impl Default for StackedLayoutSizingPolicy {
 /// draws several widgets over top of each other.
 /// typically used for a background, and some element in the foreground
 pub struct StackedLayout<'sdl> {
-    pub elems: Vec<Box<dyn Widget + 'sdl>>,
+    pub elems: Vec<&'sdl mut dyn Widget>,
     pub sizing_policy: StackedLayoutSizingPolicy,
 }
 
@@ -87,7 +87,7 @@ macro_rules! impl_widget_fn {
 
             for elem in self.elems.iter_mut() {
                 let pos_for_child = crate::widget::widget::place(
-                    elem.as_mut(),
+                    &mut **elem,
                     position,
                     event.aspect_ratio_priority,
                 )?;

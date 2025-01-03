@@ -1,6 +1,6 @@
 use example_common::fancy_surface;
 use sdl2::surface::Surface;
-use tiny_sdl2_gui::{layout::{horizontal_layout::HorizontalLayout, stacked_layout::StackedLayout}, util::length::{MaxLen, MaxLenPolicy, MinLen, MinLenPolicy}, widget::{debug::Debug, texture::{AspectRatioFailPolicy, Texture}, widget::{draw_gui, update_gui, SDLEvent}}};
+use tiny_sdl2_gui::{layout::horizontal_layout::HorizontalLayout, util::length::{MaxLen, MaxLenPolicy, MinLen, MinLenPolicy}, widget::{texture::{AspectRatioFailPolicy, Texture}, widget::{draw_gui, update_gui, SDLEvent}}};
 
 #[path = "example_common/mod.rs"]
 mod example_common;
@@ -20,14 +20,16 @@ fn main() -> std::process::ExitCode {
 
     let texture_creator = sdl.canvas.texture_creator();
 
-    let surface0 = fancy_surface::mul_mod();
-    let mut surface1 = Surface::new(256, 256, sdl2::pixels::PixelFormatEnum::ARGB8888).unwrap();
+    let surface = fancy_surface::mul_mod();
 
-    surface0.blit(None, &mut surface1, None).expect("failed blit");
+    let mut surface0 = Surface::new(256, 256, sdl2::pixels::PixelFormatEnum::ARGB8888).unwrap();
+    surface.blit(None, &mut surface0, None).expect("failed blit");
+    let mut surface1 = Surface::new(256, 256, sdl2::pixels::PixelFormatEnum::ARGB8888).unwrap();
+    surface.blit(None, &mut surface1, None).expect("failed blit");
     let mut surface2 = Surface::new(256, 256, sdl2::pixels::PixelFormatEnum::ARGB8888).unwrap();
-    surface0.blit(None, &mut surface2, None).expect("failed blit");
+    surface.blit(None, &mut surface2, None).expect("failed blit");
     let mut surface3 = Surface::new(256, 256, sdl2::pixels::PixelFormatEnum::ARGB8888).unwrap();
-    surface0.blit(None, &mut surface3, None).expect("failed blit");
+    surface.blit(None, &mut surface3, None).expect("failed blit");
 
     let texture0 = texture_creator.create_texture_from_surface(surface0).expect("err create texture");
     let mut texture_widget0 = Texture::new(&texture0);
@@ -47,10 +49,6 @@ fn main() -> std::process::ExitCode {
     texture_widget1.min_h_policy = MinLenPolicy::Literal(MinLen::LAX);
     texture_widget1.max_h_policy = MaxLenPolicy::Literal(MaxLen::LAX);
 
-    let mut stacked_layout0 = StackedLayout::default();
-    stacked_layout0.elems.push(Box::new(Debug::default()));
-    stacked_layout0.elems.push(Box::new(texture_widget1));
-
     let texture2 = texture_creator.create_texture_from_surface(surface2).expect("err create texture");
     let mut texture_widget2 = Texture::new(&texture2);
     texture_widget2.aspect_ratio_fail_policy = AspectRatioFailPolicy::ZoomIn((0.5, 0.5));
@@ -62,21 +60,17 @@ fn main() -> std::process::ExitCode {
 
     let texture3 = texture_creator.create_texture_from_surface(surface3).expect("err create texture");
     let mut texture_widget3 = Texture::new(&texture3);
-    texture_widget3.preferred_link_allowed_exceed_portion = true; // key
+    texture_widget3.preferred_link_allowed_exceed_portion = true;
     texture_widget3.min_w_policy = MinLenPolicy::Literal(MinLen::LAX);
     texture_widget3.max_w_policy = MaxLenPolicy::Literal(MaxLen::LAX);
     texture_widget3.min_h_policy = MinLenPolicy::Literal(MinLen::LAX);
     texture_widget3.max_h_policy = MaxLenPolicy::Literal(MaxLen::LAX);
 
-    let mut stacked_layout1 = StackedLayout::default();
-    stacked_layout1.elems.push(Box::new(Debug::default()));
-    stacked_layout1.elems.push(Box::new(texture_widget3));
-
     let mut horizontal_layout = HorizontalLayout::default();
-    horizontal_layout.elems.push(Box::new(texture_widget0));
-    horizontal_layout.elems.push(Box::new(stacked_layout0));
-    horizontal_layout.elems.push(Box::new(texture_widget2));
-    horizontal_layout.elems.push(Box::new(stacked_layout1));
+    horizontal_layout.elems.push(&mut texture_widget0);
+    horizontal_layout.elems.push(&mut texture_widget1);
+    horizontal_layout.elems.push(&mut texture_widget2);
+    horizontal_layout.elems.push(&mut texture_widget3);
 
 
     let mut events_accumulator: Vec<SDLEvent> = Vec::new();

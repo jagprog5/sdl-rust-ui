@@ -220,14 +220,12 @@ impl<'sdl> Widget for Button<'sdl> {
     }
 
     fn draw(&mut self, event: super::widget::WidgetEvent) -> Result<(), String> {
-        let position = match event.position {
+        let position = match frect_to_rect(event.position) {
             Some(v) => v,
             // the rest of this is just for drawing or being clicked, both
             // require non-zero area position
             None => return Ok(()),
         };
-
-        let position = frect_to_rect(position);
 
         let focused = event.focus_manager.map(|f| f.is_focused(self.focus_id)).unwrap_or(false);
         let pressed = self.pressed;

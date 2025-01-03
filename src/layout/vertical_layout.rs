@@ -21,7 +21,7 @@ pub enum MajorAxisMaxLenPolicy {
 }
 
 pub struct VerticalLayout<'sdl> {
-    pub elems: Vec<Box<dyn Widget + 'sdl>>,
+    pub elems: Vec<&'sdl mut dyn Widget>,
     pub preferred_w: PreferredPortion,
     pub preferred_h: PreferredPortion,
     pub min_w_fail_policy: MinLenFailPolicy,
@@ -131,7 +131,7 @@ macro_rules! impl_widget_fn {
                     // no spaces between elements if there is one element. just
                     // draw it and return. and guard against div by 0
                     let position = crate::widget::widget::place(
-                        self.elems[0].as_mut(),
+                        self.elems[0],
                         position,
                         crate::util::length::AspectRatioPreferredDirection::WidthFromHeight,
                     )?;

@@ -65,6 +65,12 @@ pub trait TextureVariantStyle<TVariant> {
 /// a default provided check box style
 pub struct DefaultCheckBoxStyle {}
 
+impl Default for DefaultCheckBoxStyle {
+    fn default() -> Self {
+        Self {  }
+    }
+}
+
 impl TextureVariantStyle<CheckBoxTextureVariant> for DefaultCheckBoxStyle {
     fn draw(
         &mut self,
@@ -300,16 +306,12 @@ where
     T: FnMut() -> Result<(), String> + ?Sized,
 {
     FocusManager::default_widget_focus_behavior(focus_id, &mut event);
-    let position = match event.position {
+    let position = match frect_to_rect(event.position) {
         Some(v) => v,
         // the rest of this is just for drawing or being clicked, both
         // require non-zero area position
         None => return Ok(()),
     };
-
-    // as always, important to snap to integer grid before rendering /
-    // using
-    let position = frect_to_rect(position);
 
     // value updated each frame
     *pressed = false;
@@ -350,12 +352,12 @@ where
                 }
                 if position.contains_point((x, y)) {
                     // ignore mouse events out of scroll area
-                    if event
-                        .canvas
-                        .clip_rect()
-                        .map(|clip_rect| !clip_rect.contains_point((x, y)))
-                        .unwrap_or(false)
-                    {
+                    let point_contained_in_clipping_rect = match event.canvas.clip_rect() {
+                        sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
+                        sdl2::render::ClippingRect::Zero => false,
+                        sdl2::render::ClippingRect::None => true,
+                    };
+                    if !point_contained_in_clipping_rect {
                         continue;
                     }
                     *pressed = true;
@@ -371,12 +373,12 @@ where
                 // focus manager is used at all)
                 if position.contains_point((x, y)) {
                     // ignore mouse events out of scroll area
-                    if event
-                        .canvas
-                        .clip_rect()
-                        .map(|clip_rect| !clip_rect.contains_point((x, y)))
-                        .unwrap_or(false)
-                    {
+                    let point_contained_in_clipping_rect = match event.canvas.clip_rect() {
+                        sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
+                        sdl2::render::ClippingRect::Zero => false,
+                        sdl2::render::ClippingRect::None => true,
+                    };
+                    if !point_contained_in_clipping_rect {
                         continue;
                     }
 
@@ -397,12 +399,12 @@ where
                 // focus manager is used at all)
                 if position.contains_point((x, y)) {
                     // ignore mouse events out of scroll area
-                    if event
-                        .canvas
-                        .clip_rect()
-                        .map(|clip_rect| !clip_rect.contains_point((x, y)))
-                        .unwrap_or(false)
-                    {
+                    let point_contained_in_clipping_rect = match event.canvas.clip_rect() {
+                        sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
+                        sdl2::render::ClippingRect::Zero => false,
+                        sdl2::render::ClippingRect::None => true,
+                    };
+                    if !point_contained_in_clipping_rect {
                         continue;
                     }
 
@@ -438,14 +440,12 @@ impl<'sdl, 'state> Widget for CheckBox<'sdl, 'state> {
     }
 
     fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
-        let position = match event.position {
+        let position = match frect_to_rect(event.position) {
             Some(v) => v,
             // the rest of this is just for drawing or being clicked, both
             // require non-zero area position
             None => return Ok(()),
         };
-
-        let position = frect_to_rect(position);
 
         let focused = event
             .focus_manager

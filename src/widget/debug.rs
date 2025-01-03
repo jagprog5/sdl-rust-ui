@@ -133,13 +133,12 @@ impl Widget for Debug {
     }
 
     fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
-        let pos = match event.position {
+        // as always, snap to integer grid before rendering / using,
+        // plus checks that draw area is non-zero
+        let pos = match frect_to_rect(event.position){
             Some(v) => v,
-            None => return Ok(()), // debug only cares about being clicked
+            None => return Ok(()),
         };
-
-        // as always, snap to integer grid before rendering / using
-        let pos = frect_to_rect(pos);
 
         let mut color_to_use = Color::RED;
 
@@ -153,11 +152,15 @@ impl Widget for Debug {
                 } => {
                     if pos.contains_point((x, y)) {
                         // ignore mouse events out of scroll area
-                        if event.canvas.clip_rect().map(|clip_rect| {
-                            !clip_rect.contains_point((x, y))
-                        }).unwrap_or(false) {
+                        let point_contained_in_clipping_rect = match event.canvas.clip_rect() {
+                            sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
+                            sdl2::render::ClippingRect::Zero => false,
+                            sdl2::render::ClippingRect::None => true,
+                        };
+                        if !point_contained_in_clipping_rect {
                             continue;
                         }
+
                         e.set_consumed();
                         color_to_use = Color::GREEN;
                         println!("debug rect at {:?} was clicked!", pos);

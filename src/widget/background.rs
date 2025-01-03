@@ -11,6 +11,20 @@ use sdl2::{
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
+pub struct SolidColorBackground {
+    pub color: Color,
+}
+
+impl Widget for SolidColorBackground {
+    fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
+        event.canvas.set_draw_color(self.color);
+        if let Some(pos) = crate::util::length::frect_to_rect(event.position) {
+            return event.canvas.fill_rect(pos);
+        }
+        Ok(())
+    }
+}
+
 use super::widget::{Widget, WidgetEvent};
 
 pub trait SoftwareRenderBackgroundStyle: Send + Sync {
@@ -182,12 +196,10 @@ impl<'sdl, Style: SoftwareRenderBackgroundStyle> SoftwareRenderBackground<'sdl, 
 
 impl<'sdl, Style: SoftwareRenderBackgroundStyle> Widget for SoftwareRenderBackground<'sdl, Style> {
     fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
-        let position = match event.position {
+        let position = match crate::util::length::frect_to_rect(event.position) {
             Some(v) => v,
-            None => return Ok(()), // no input handling
+            None => return Ok(()), // nothing if zero area
         };
-
-        let position = crate::util::length::frect_to_rect(position);
 
         let scale_factor = self.style.scale_factor();
 

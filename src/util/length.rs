@@ -248,6 +248,19 @@ impl AspectRatioPreferredDirection {
 
 /// positioning and sizing stays as floats, until just before rendering /
 /// updating, only then is it converted to integers
-pub fn frect_to_rect(rect: sdl2::rect::FRect) -> sdl2::rect::Rect {
-    sdl2::rect::Rect::new(rect.x().round() as i32, rect.y().round() as i32, rect.width().round() as u32, rect.height().round() as u32)
+/// 
+/// this will round away from 0 for position and size. if the size rounds to a
+/// zero area, then None is returned
+pub fn frect_to_rect(rect: Option<sdl2::rect::FRect>) -> Option<sdl2::rect::Rect> {
+    let rect = match rect {
+        Some(v) => v,
+        None => return None,
+    };
+    let next_w = rect.width().round();
+    let next_h = rect.height().round();
+    if next_w < 1. || next_h < 1. {
+        None
+    } else {
+        Some(sdl2::rect::Rect::new(rect.x().round() as i32, rect.y().round() as i32, next_w as u32, next_h as u32))
+    }
 }

@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 # was "0.36.0" - added scale mode
 # waiting on https://github.com/Rust-SDL2/rust-sdl2/pull/1444
-sdl2 = { git = "https://github.com/jagprog5/rust-sdl2.git", features = [] }
+sdl2 = { git = "https://github.com/jagprog5/rust-sdl2.git", branch = "dev", features = [] }
 weak-table = { version = "0.3.2", optional = true }
 compact_str = "0.8.0"
 rayon = { version = "1.7", optional = true }

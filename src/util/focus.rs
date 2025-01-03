@@ -79,24 +79,24 @@ impl FocusManager {
             Some(v) => v,
             None => return,
         };
-        for sdl_input in event.events.iter_mut().filter(|e| e.available()) {
+        for sdl_input in event.events.iter_mut() {
             match sdl_input.e {
                 sdl2::event::Event::MouseMotion { x, y, .. } => {
                     let mut has_point = false;
-                    if let Some(position) = event.position {
-                        // as always, snap to integer grid before rendering /
-                        // using
-                        let position = frect_to_rect(position);
-                        // ignore mouse events out position bounds and out of of
-                        // scroll area clipping rect
-                        if position.contains_point((x, y))
-                            && event
-                                .canvas
-                                .clip_rect()
-                                .map(|clip_rect| clip_rect.contains_point((x, y)))
-                                .unwrap_or(true)
-                        {
-                            has_point = true;
+
+                    // if event is consumed, it's considered not over this widget for focus purposes
+                    if sdl_input.available() { 
+                        if let Some(position) = frect_to_rect(event.position) {
+                            let point_contained_in_clipping_rect = match event.canvas.clip_rect() {
+                                sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
+                                sdl2::render::ClippingRect::Zero => false,
+                                sdl2::render::ClippingRect::None => true,
+                            };
+                            // ignore mouse events out of position bounds and
+                            // out of scroll area clipping rect
+                            if position.contains_point((x, y)) && point_contained_in_clipping_rect {
+                                has_point = true;
+                            }
                         }
                     }
 
@@ -112,6 +112,9 @@ impl FocusManager {
                     keymod,
                     ..
                 } => {
+                    if sdl_input.consumed() {
+                        continue;
+                    }
                     if !focus_manager.is_focused(my_focus_id) {
                         continue; // only process tab if I am focused
                     }

@@ -178,7 +178,7 @@ impl<'sdl> Widget for Texture<'sdl> {
     }
 
     fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
-        let position = match event.position {
+        let position = match frect_to_rect(event.position) {
             Some(v) => v,
             None => return Ok(()), // has no other functionality other than drawing
         };
@@ -187,7 +187,7 @@ impl<'sdl> Widget for Texture<'sdl> {
             &self.aspect_ratio_fail_policy,
             event.canvas,
             None,
-            frect_to_rect(position),
+            position,
         )
     }
 }
@@ -302,16 +302,19 @@ pub fn texture_draw_f(
         }
         Some(v) => (v.x(), v.y(), v.width(), v.height()),
     };
-    let src_rect = Rect::new(src_x, src_y, src_w, src_h);
-    let (src_x, src_y, src_w, src_h) = (src_x as f32, src_y as f32, src_w as f32, src_h as f32);
 
-    if src_w == 0. || src_h == 0. {
+    if src_w == 0 || src_h == 0 {
         return Ok(()); // can't draw empty. also guards against div by 0
     }
 
     match aspect_ratio_policy {
-        AspectRatioFailPolicy::Stretch => canvas.copy(texture, None, Some(frect_to_rect(dst))),
+        AspectRatioFailPolicy::Stretch => {
+            canvas.copy_f(texture, None, dst)
+        },
         AspectRatioFailPolicy::ZoomOut((zoom_x, zoom_y)) => {
+            let src_rect = Rect::new(src_x, src_y, src_w, src_h);
+            let src_w = src_w as f32;
+            let src_h = src_h as f32;
             let src_aspect_ratio = src_w / src_h;
             let dst_aspect_ratio = dst.width() / dst.height();
 
@@ -339,7 +342,7 @@ pub fn texture_draw_f(
             } else {
                 // padding at the left and right; scale down the size of the
                 // src so the height matches the destination
-                let scale_down = dst.height() / src_h;
+                let scale_down = dst.height() / src_h as f32;
                 let dst_width = src_w * scale_down;
                 let dst_height = src_h * scale_down;
                 if dst_width == 0. || dst_height == 0. {
@@ -358,29 +361,28 @@ pub fn texture_draw_f(
                     )),
                 )
             }
-        }
+        },
         AspectRatioFailPolicy::ZoomIn((zoom_x, zoom_y)) => {
-            let src_aspect_ratio = src_w / src_h;
+            let src_aspect_ratio = src_w as f32 / src_h as f32;
             let dst_aspect_ratio = dst.width() / dst.height();
 
             if src_aspect_ratio > dst_aspect_ratio {
-                let width = (dst.width() / dst.height()) * src_h;
-                let x = (src_w - width) * zoom_x;
-                canvas.copy(
-                    texture,
-                    Some(frect_to_rect(FRect::new(src_x + x, src_y, width, src_h))),
-                    Some(frect_to_rect(dst)),
-                )
-            } else {
-                let height = (src_w / dst.width()) * dst.height();
-                let y = (src_h - height) * zoom_y;
+                let width = (dst.width() / dst.height()) * src_h as f32;
+                let x = (src_w as f32 - width) * zoom_x;
                 canvas.copy_f(
                     texture,
-                    Some(frect_to_rect(FRect::new(src_x, src_y + y, src_w, height))),
+                    Rect::new(src_x + x.round() as i32, src_y, src_w, src_h),
+                    Some(dst)
+                )
+            } else {
+                let height = (src_w as f32 / dst.width()) * dst.height();
+                let y = (src_h as f32 - height) * zoom_y;
+                canvas.copy_f(
+                    texture,
+                    Rect::new(src_x, src_y + y.round() as i32, src_w, src_h),
                     Some(dst),
                 )
             }
-        }
+        },
     }
 }
-

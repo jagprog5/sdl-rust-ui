@@ -20,8 +20,11 @@ pub trait BorderStyle {
     /// what is the width of this border (equal all the way around)
     fn width(&self) -> u32;
 
-    /// draw the border on the provided texture canvas.
-    /// the texture will be redrawn only if the target dimensions change.
+    /// draw the border on the provided texture canvas. the texture will be
+    /// redrawn only if the target dimensions change.
+    /// 
+    /// the texture canvas can have a width or height of down to 1 (regardless
+    /// of specified border width)
     fn draw(&self, canvas: &mut Canvas<Window>) -> Result<(), String>;
 }
 
@@ -169,7 +172,7 @@ impl BorderStyle for Empty {
 
 // contains a widget within a border
 pub struct Border<'sdl> {
-    pub contains: Box<dyn Widget + 'sdl>,
+    pub contains: &'sdl mut dyn Widget,
     style: Box<dyn BorderStyle>,
 
     texture: Option<Texture<'sdl>>,
@@ -183,7 +186,7 @@ pub struct Border<'sdl> {
 
 impl<'sdl> Border<'sdl> {
     pub fn new(
-        contains: Box<dyn Widget + 'sdl>,
+        contains: &'sdl mut dyn Widget,
         creator: &'sdl TextureCreator<WindowContext>,
         style: Box<dyn BorderStyle>,
     ) -> Self {
@@ -310,8 +313,9 @@ impl<'sdl> Widget for Border<'sdl> {
         let pos = match event.position {
             Some(v) => v,
             None => {
-                // can't draw with zero area
-                return Ok(());
+                // can't draw the border with zero area but still pass to
+                // contained to be consistent with update
+                return self.contains.draw(event);
             }
         };
         
@@ -394,11 +398,16 @@ impl<'sdl> Widget for Border<'sdl> {
         // all of the positioning and sizing is kept in float form, but once
         // drawing occurs it should draw at integer coordinates. it is expected
         // that the child will do the same (as should all widgets)
-        event.canvas.copy(
-            &texture,
-            None,
-            Some(frect_to_rect(pos)),
-        )?;
+        let mut err: Option<String> = None;
+        frect_to_rect(Some(pos)).map(|pos| {
+            if let Err(e) = event.canvas.copy(&texture, None, Some(pos)) {
+                err = Some(e);
+            }
+        });
+
+        if let Some(e) = err {
+            return Err(e);
+        }
 
         self.texture = Some(texture);
 

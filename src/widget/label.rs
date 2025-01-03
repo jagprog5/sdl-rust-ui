@@ -6,7 +6,7 @@ use sdl2::{render::TextureCreator, video::WindowContext};
 
 use crate::util::font::{FontStyle, TextRenderProperties, TextRenderType};
 use crate::util::length::{
-    frect_to_rect, AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MaxLenPolicy, MinLen, MinLenFailPolicy, MinLenPolicy, PreferredPortion
+    AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MaxLenPolicy, MinLen, MinLenFailPolicy, MinLenPolicy, PreferredPortion
 };
 
 use crate::widget::{
@@ -339,7 +339,7 @@ impl<'sdl, 'state> Widget for Label<'sdl, 'state> {
             // more consistent; regardless of what the aspect ratio fail policy
             // (padding bars), give a background over the entirety of the label
             event.canvas.set_draw_color(bg);
-            event.canvas.fill_rect(frect_to_rect(position))?;
+            event.canvas.fill_frect(position)?;
         }
 
         let cache = match self.cache.take().filter(|cache| {
