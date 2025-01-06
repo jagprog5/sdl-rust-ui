@@ -3,7 +3,7 @@ use std::{cell::Cell, fs::File, io::Read, path::Path};
 use compact_str::CompactString;
 use rand::Rng;
 use sdl2::pixels::Color;
-use tiny_sdl2_gui::{layout::{horizontal_layout::HorizontalLayout, stacked_layout::{StackedLayout, StackedLayoutLiteralSizing, StackedLayoutSizingPolicy}, vertical_layout::VerticalLayout}, util::{font::{FontManager, TextRenderType, TextRenderer}, length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy, PreferredPortion}}, widget::{background::{SoftwareRenderBackground, Wood}, label::{DefaultLabelState, Label}, texture::AspectRatioFailPolicy, widget::{draw_gui, update_gui, SDLEvent}}};
+use tiny_sdl2_gui::{layout::{horizontal_layout::HorizontalLayout, stacked_layout::{StackedLayout, StackedLayoutLiteralSizing, StackedLayoutSizingPolicy}, vertical_layout::VerticalLayout}, util::{font::{FontManager, SingleLineTextRenderType, TextRenderer}, length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy}}, widget::{background::{SoftwareRenderBackground, Wood}, multi_line_label::{MultiLineLabel, MultiLineMinHeightFailPolicy}, single_line_label::{DefaultSingleLineLabelState, SingleLineLabel}, texture::AspectRatioFailPolicy, widget::{draw_gui, update_gui, SDLEvent}}};
 
 
 #[path = "example_common/mod.rs"]
@@ -11,7 +11,7 @@ mod example_common;
 
 fn main() -> std::process::ExitCode {
     const WIDTH: u32 = 800;
-    const HEIGHT: u32 = 200;
+    const HEIGHT: u32 = 600;
 
     let mut sdl = example_common::sdl_util::SDLSystems::new("labels", (WIDTH, HEIGHT)).unwrap();
     let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string()).unwrap();
@@ -34,12 +34,12 @@ fn main() -> std::process::ExitCode {
 
     // ====================== TOP LABEL ========================================
 
-    let top_label_text = DefaultLabelState {
+    let top_label_text = DefaultSingleLineLabelState {
         inner: Cell::new("hello".into()),
     };
-    let mut top_label = Label::new(
+    let mut top_label = SingleLineLabel::new(
         &top_label_text,
-        TextRenderType::Blended(Color::WHITE),
+        SingleLineTextRenderType::Blended(Color::WHITE),
         Box::new(TextRenderer::new(&font_manager)),
         &sdl.texture_creator,
     );
@@ -55,9 +55,9 @@ fn main() -> std::process::ExitCode {
     // ====================== MIDDLE LABEL =====================================
 
     let middle_label_text = CompactString::from("the quick brown fox");
-    let mut middle_label = Label::new(
+    let mut middle_label = SingleLineLabel::new(
         &middle_label_text,
-        TextRenderType::Shaded(Color::WHITE, Color::GRAY),
+        SingleLineTextRenderType::Shaded(Color::WHITE, Color::GRAY),
         Box::new(TextRenderer::new(&font_manager)),
         &sdl.texture_creator,
     );
@@ -66,17 +66,17 @@ fn main() -> std::process::ExitCode {
     // ======================== BOTTOM LABELS ==================================
     
     let bottom_left_label_text = CompactString::from("horizontal");
-    let mut bottom_left_label = Label::new(
+    let mut bottom_left_label = SingleLineLabel::new(
         &bottom_left_label_text,
-        TextRenderType::Blended(Color::WHITE),
+        SingleLineTextRenderType::Blended(Color::WHITE),
         Box::new(TextRenderer::new(&font_manager)),
         &sdl.texture_creator,
     );
 
     let bottom_right_label_text = CompactString::from("horizontal2q|");
-    let mut bottom_right_label = Label::new(
+    let mut bottom_right_label = SingleLineLabel::new(
         &bottom_right_label_text,
-        TextRenderType::Blended(Color::WHITE),
+        SingleLineTextRenderType::Blended(Color::WHITE),
         Box::new(TextRenderer::new(&font_manager)),
         &sdl.texture_creator,
     );
@@ -88,11 +88,14 @@ fn main() -> std::process::ExitCode {
     bottom_right_label.min_w_fail_policy = MinLenFailPolicy::NEGATIVE;
     bottom_right_label.aspect_ratio_fail_policy = AspectRatioFailPolicy::ZoomOut((1., 0.5));
 
+    let multiline_string_displayed = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.".to_owned();
+    let mut multiline_widget = MultiLineLabel::new(&multiline_string_displayed, 20, Color::WHITE, Box::new(TextRenderer::new(&font_manager)), &sdl.texture_creator);
+    multiline_widget.min_h_policy = MultiLineMinHeightFailPolicy::CutOff(1.0);
+
     // ======================== BUILD GUI ======================================
 
     let mut layout = VerticalLayout::default();
     let mut bottom_layout = HorizontalLayout::default();
-    bottom_layout.preferred_h =  PreferredPortion::EMPTY;
     let mut top_layout = StackedLayout::default();
     top_layout.sizing_policy = StackedLayoutSizingPolicy::Literal(StackedLayoutLiteralSizing::default());
 
@@ -108,11 +111,15 @@ fn main() -> std::process::ExitCode {
 
     top_layout.elems.push(&mut top_label);
     layout.elems.push(&mut top_layout);
+
     layout.elems.push(&mut middle_label);
+
+    layout.elems.push(&mut multiline_widget);
 
     bottom_layout.elems.push(&mut bottom_left_label);
     bottom_layout.elems.push(&mut bottom_right_label);
     layout.elems.push(&mut bottom_layout);
+
 
     let mut events_accumulator: Vec<SDLEvent> = Vec::new();
     'running: loop {

@@ -155,12 +155,14 @@ pub trait Widget {
         (PreferredPortion::FULL, PreferredPortion::FULL)
     }
 
-    /// implementors should use this to request an aspect ratio
+    /// implementors should use this to request an aspect ratio (additionally,
+    /// the min and max should have the same ratio)
     fn preferred_width_from_height(&mut self, _pref_h: f32) -> Option<Result<f32, String>> {
         None
     }
 
-    /// implementors should use this to request an aspect ratio
+    /// implementors should use this to request an aspect ratio (additionally,
+    /// the min and max should have the same ratio)
     fn preferred_height_from_width(&mut self, _pref_w: f32) -> Option<Result<f32, String>> {
         None
     }

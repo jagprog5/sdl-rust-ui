@@ -41,13 +41,13 @@ Widgets
  - [background](./src/widget/background.rs), parallel software rendering of a background texture
  - [border](./src/widget/border.rs), contains a widget in a border with a border style
  - [texture](./src/widget/texture.rs), generic texture display with sizing control
+ - [single](./src/widget/single_line_label.rs) and [multiline](./src/widget/multi_line_label.rs) labels
  - [button](./src/widget/button.rs)
  - [checkbox](./src/widget/checkbox.rs)
 
 ## TODO
 
 - vertical + horizontal scroll bar widget
-- multiline text display widget
 - text input widget
 - audio
 - (maybe) better default style

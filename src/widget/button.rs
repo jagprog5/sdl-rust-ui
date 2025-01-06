@@ -4,7 +4,7 @@ use crate::util::length::{
 };
 
 use super::checkbox::{TextureVariantSizeCache, TextureVariantStyle};
-use super::label::Label;
+use super::single_line_label::SingleLineLabel;
 use super::widget::{Widget, WidgetEvent};
 
 use sdl2::pixels::Color;
@@ -25,7 +25,7 @@ pub enum ButtonTextureVariant {
 
 /// a default provided check box style
 pub struct DefaultButtonStyle<'sdl, 'state> {
-    pub label: Label<'sdl, 'state>,
+    pub label: SingleLineLabel<'sdl, 'state>,
 }
 
 /// as well as indicating how variants of the widget state populate a size cache
