@@ -3,7 +3,7 @@ use std::{cell::Cell, fs::File, io::Read, path::Path};
 use compact_str::CompactString;
 use rand::Rng;
 use sdl2::pixels::Color;
-use tiny_sdl2_gui::{layout::{horizontal_layout::HorizontalLayout, stacked_layout::{StackedLayout, StackedLayoutLiteralSizing, StackedLayoutSizingPolicy}, vertical_layout::VerticalLayout}, util::{font::{FontManager, SingleLineTextRenderType, TextRenderer}, length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy}}, widget::{background::{SoftwareRenderBackground, Wood}, multi_line_label::{MultiLineMinHeightFailPolicy, MultiLineLabel}, single_line_label::{DefaultSingleLineLabelState, SingleLineLabel}, texture::AspectRatioFailPolicy, widget::{draw_gui, update_gui, SDLEvent}}};
+use tiny_sdl2_gui::{layout::{horizontal_layout::HorizontalLayout, stacked_layout::{StackedLayout, StackedLayoutLiteralSizing, StackedLayoutSizingPolicy}, vertical_layout::VerticalLayout}, util::{font::{FontManager, SingleLineTextRenderType, TextRenderer}, length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy}}, widget::{background::{SoftwareRenderBackground, Wood}, multi_line_label::{MultiLineLabel, MultiLineMinHeightFailPolicy}, single_line_label::{DefaultSingleLineLabelState, SingleLineLabel}, texture::AspectRatioFailPolicy, widget::{draw_gui, update_gui, SDLEvent}}};
 
 
 #[path = "example_common/mod.rs"]
@@ -90,7 +90,7 @@ fn main() -> std::process::ExitCode {
 
     let multiline_string_displayed = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.".to_owned();
     let mut multiline_widget = MultiLineLabel::new(&multiline_string_displayed, 20, Color::WHITE, Box::new(TextRenderer::new(&font_manager)), &sdl.texture_creator);
-    // multiline_widget.min_h_policy = MultiLineMinHeightFailPolicy::CutOff;
+    multiline_widget.min_h_policy = MultiLineMinHeightFailPolicy::CutOff(1.0);
 
     // ======================== BUILD GUI ======================================
 

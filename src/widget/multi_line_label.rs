@@ -145,27 +145,27 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
                 )),
             )?;
         } else {
+            let excess = query.height - position.height();
+            let excess = excess as f32;
             match self.min_h_policy {
                 MultiLineMinHeightFailPolicy::CutOff(v) => {
-                        let excess = query.height - position.height();
-                        let excess = excess as f32;
-                        let excess = excess * v;
-                        let excess = excess.round() as i32;
-                        event.canvas.copy(
+                    let excess = excess * (1. - v);
+                    let excess = excess.round() as i32;
+                    event.canvas.copy(
                         txt,
                         Some(Rect::new(0, excess, query.width, position.height())),
                         Some(position),
                     )?
                 }
-                ,
                 MultiLineMinHeightFailPolicy::AllowRunOff(v) => {
-                    // TODO
+                    let excess = excess * (v.0 - 1.);
+                    let excess = excess.round() as i32;
                     event.canvas.copy(
                         txt,
                         None,
                         Some(Rect::new(
                             position.x,
-                            position.y,
+                            position.y + excess,
                             position.width(),
                             query.height,
                         )),

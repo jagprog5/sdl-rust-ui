@@ -48,7 +48,6 @@ Widgets
 ## TODO
 
 - vertical + horizontal scroll bar widget
-- multiline text display widget
 - text input widget
 - audio
 - (maybe) better default style
