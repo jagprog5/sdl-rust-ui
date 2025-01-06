@@ -2,7 +2,7 @@
 use std::{cell::Cell, fs::File, io::Read, path::Path};
 
 use sdl2::pixels::Color;
-use tiny_sdl2_gui::{layout::{horizontal_layout::HorizontalLayout, vertical_layout::VerticalLayout}, util::{focus::FocusManager, font::{FontManager, TextRenderType, TextRenderer}, length::{MaxLen, MaxLenPolicy}}, widget::{button::{Button, DefaultButtonStyle}, checkbox::{CheckBox, DefaultCheckBoxStyle}, label::{DefaultLabelState, Label}, widget::{draw_gui, update_gui, SDLEvent}}};
+use tiny_sdl2_gui::{layout::{horizontal_layout::HorizontalLayout, vertical_layout::VerticalLayout}, util::{focus::FocusManager, font::{FontManager, SingleLineTextRenderType, TextRenderer}, length::{MaxLen, MaxLenPolicy}}, widget::{button::{Button, DefaultButtonStyle}, checkbox::{CheckBox, DefaultCheckBoxStyle}, single_line_label::{DefaultSingleLineLabelState, SingleLineLabel}, widget::{draw_gui, update_gui, SDLEvent}}};
 
 #[path = "example_common/mod.rs"]
 mod example_common;
@@ -33,8 +33,8 @@ fn main() -> std::process::ExitCode {
     let mut sdl = example_common::sdl_util::SDLSystems::new("shift tab! mouse!", (WIDTH, HEIGHT)).unwrap();
     let mut focus_manager = FocusManager::default();
 
-    let button_text = DefaultLabelState{ inner: Cell::new("button".into()) };
-    let button_label = Label::new(&button_text, TextRenderType::Blended(Color::WHITE), Box::new(TextRenderer::new(&font_manager)), &sdl.texture_creator);
+    let button_text = DefaultSingleLineLabelState{ inner: Cell::new("button".into()) };
+    let button_label = SingleLineLabel::new(&button_text, SingleLineTextRenderType::Blended(Color::WHITE), Box::new(TextRenderer::new(&font_manager)), &sdl.texture_creator);
     let button_style = DefaultButtonStyle {
         label: button_label,
     };
