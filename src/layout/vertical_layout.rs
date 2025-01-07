@@ -6,8 +6,6 @@ use crate::{
     widget::widget::{Widget, WidgetEvent},
 };
 
-use sdl2::rect::FRect;
-
 use super::horizontal_layout::RUN_OFF_SIZING_AMOUNT;
 
 #[derive(Clone, Copy)]
@@ -56,19 +54,18 @@ impl<'sdl> Default for VerticalLayout<'sdl> {
 macro_rules! impl_widget_fn {
     ($fn_name:ident) => {
         fn $fn_name(&mut self, mut event: WidgetEvent) -> Result<(), String> {
-            let position = match event.position {
-                Some(v) => v,
-                None => {
-                    // even if there is no draw position, still always propagate all
-                    // events to all children
-                    for elem in self.elems.iter_mut() {
-                        let mut sub_event = event.sub_event(None);
-                        sub_event.aspect_ratio_priority = crate::util::length::AspectRatioPreferredDirection::WidthFromHeight;
-                        elem.$fn_name(sub_event)?;
-                    }
-                    return Ok(());
+            let is_pos_non_empty: Option<sdl2::rect::Rect> = event.position.into();
+            if let None = is_pos_non_empty {
+                // even if there is no draw position, still always propagate all
+                // events to all children. consistency
+                for elem in self.elems.iter_mut() {
+                    let mut sub_event = event.sub_event(event.position);
+                    sub_event.aspect_ratio_priority =
+                        crate::util::length::AspectRatioPreferredDirection::WidthFromHeight;
+                    elem.$fn_name(sub_event)?;
                 }
-            };
+                return Ok(());
+            }
 
             // collect various info from child components
             let mut sum_preferred_vertical = PreferredPortion::EMPTY;
@@ -94,7 +91,7 @@ macro_rules! impl_widget_fn {
                 info.height = info.preferred_vertical.weighted_portion(
                     sum_preferred_vertical,
                     self.elems.len(),
-                    position.height(),
+                    event.position.h,
                 );
                 if info.height < info.min_vertical {
                     // it is being made larger than it would prefer.
@@ -122,7 +119,7 @@ macro_rules! impl_widget_fn {
                 sum_display_height += info.height;
             }
 
-            let vertical_space = if sum_display_height < position.height() {
+            let vertical_space = if sum_display_height < event.position.h {
                 if self.elems.len() == 0 {
                     return Ok(()); // no elements to draw. and guard against underflow
                 }
@@ -132,16 +129,17 @@ macro_rules! impl_widget_fn {
                     // draw it and return. and guard against div by 0
                     let position = crate::widget::widget::place(
                         self.elems[0],
-                        position,
+                        event.position,
                         crate::util::length::AspectRatioPreferredDirection::WidthFromHeight,
                     )?;
                     let mut sub_event = event.sub_event(position);
-                    sub_event.aspect_ratio_priority = crate::util::length::AspectRatioPreferredDirection::WidthFromHeight;
+                    sub_event.aspect_ratio_priority =
+                        crate::util::length::AspectRatioPreferredDirection::WidthFromHeight;
                     self.elems[0].$fn_name(sub_event)?;
                     return Ok(());
                 }
 
-                let extra_space = position.height() - sum_display_height;
+                let extra_space = event.position.h - sum_display_height;
                 debug_assert!(self.elems.len() > 0);
                 let num_spaces = self.elems.len() as u32 - 1;
 
@@ -154,7 +152,7 @@ macro_rules! impl_widget_fn {
                 0.
             };
 
-            let mut y_pos = position.y();
+            let mut y_pos = event.position.y;
             let mut e_err_accumulation = 0f32;
             for (elem, info) in self.elems.iter_mut().zip(info.iter_mut()) {
                 e_err_accumulation += info.height - info.height.floor();
@@ -165,7 +163,7 @@ macro_rules! impl_widget_fn {
                 }
 
                 // calculate the width, and maybe the width from the height
-                let pre_clamp_width = info.preferred_horizontal.get(position.width());
+                let pre_clamp_width = info.preferred_horizontal.get(event.position.w);
                 let mut width = clamp(pre_clamp_width, info.min_horizontal, info.max_horizontal);
                 if let Some(new_w) = elem.preferred_width_from_height(info.height) {
                     let new_w = new_w?;
@@ -174,28 +172,24 @@ macro_rules! impl_widget_fn {
                     } else {
                         info.max_horizontal.strictest(MaxLen(pre_clamp_width))
                     };
-                    width = clamp(
-                        new_w,
-                        info.min_horizontal,
-                        new_w_max_clamp,
-                    );
+                    width = clamp(new_w, info.min_horizontal, new_w_max_clamp);
                 }
 
                 let x = place(
                     width,
-                    position.width(),
+                    event.position.w,
                     elem.min_w_fail_policy(),
                     elem.max_w_fail_policy(),
-                ) + position.x();
+                ) + event.position.x;
 
-                // let width = info.width;
-                let position = if width != 0. && info.height != 0. {
-                    Some(FRect::new(x, y_pos, width, info.height))
-                } else {
-                    None
-                };
-                let mut sub_event = event.sub_event(position);
-                sub_event.aspect_ratio_priority = crate::util::length::AspectRatioPreferredDirection::WidthFromHeight;
+                let mut sub_event = event.sub_event(crate::util::rect::FRect {
+                    x,
+                    y: y_pos,
+                    w: width,
+                    h: info.height,
+                });
+                sub_event.aspect_ratio_priority =
+                    crate::util::length::AspectRatioPreferredDirection::WidthFromHeight;
                 elem.$fn_name(sub_event)?;
                 y_pos += info.height;
                 y_pos += vertical_space;

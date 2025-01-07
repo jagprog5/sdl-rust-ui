@@ -5,7 +5,7 @@ use crate::util::{
     length::{
         clamp, AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy,
         PreferredPortion,
-    },
+    }, rect::FRect,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -78,19 +78,21 @@ pub struct WidgetEvent<'sdl> {
     /// or alternatively, the focus manager is None if None is passed to
     /// update_gui
     pub focus_manager: Option<&'sdl mut FocusManager>,
-    /// the position that this widget is at. None when zero area
-    // one might wonder - why is FRect being used instead of Rect?
+    /// the position that this widget is at. this is NOT an sdl2::rect::FRect
+    // it's important to keep the sizing as floats as the sizing is being
+    // computed.
+    // - otherwise there's a lot of casting to and from integer. best to keep it
+    //   as floating point until just before use
     // - started running into issues where a one pixel difference leads to a
     //   visible jump. specifically, when a label font size changes in
     //   horizontal layout (a one pixel in height leading to a larger difference
     //   in width due to aspect ratio)
-    // - rect uses i32 for pos and u32 for length. simpler to always use f32
-    // - sdl2 has an f32 API 
-    pub position: Option<sdl2::rect::FRect>,
+    // - sdl2 has an f32 API
+    pub position: FRect,
     /// in the context of where this widget is in the GUI, does the width or the
     /// height have priority in regard to enforcing an aspect ratio
     pub aspect_ratio_priority: AspectRatioPreferredDirection,
-    /// handle all events from sdl. contains events in order of receival
+    /// handle all events from sdl. contains events in order of occurrence
     pub events: &'sdl mut [SDLEvent],
     /// draw the widget and children
     pub canvas: &'sdl mut sdl2::render::WindowCanvas,
@@ -101,7 +103,7 @@ impl<'sdl> WidgetEvent<'sdl> {
     /// intended to be passed to a layout's children
     pub fn sub_event(
         &mut self,
-        position: Option<sdl2::rect::FRect>,
+        position: FRect,
     ) -> WidgetEvent<'_> {
         WidgetEvent {
             // do a re-borrow. create a mutable borrow of the mutable borrow
@@ -213,7 +215,12 @@ macro_rules! generate_gui_function {
 
             let position = place(
                 widget,
-                sdl2::rect::FRect::new(0., 0., w as f32, h as f32),
+                FRect {
+                    x: 0.,
+                    y: 0.,
+                    w: w as f32,
+                    h: h as f32,
+                },
                 aspect_ratio_priority,
             )?;
 
@@ -239,14 +246,14 @@ generate_gui_function!(draw_gui, draw);
 /// occur, returns None
 pub fn place(
     widget: &mut dyn Widget,
-    parent: sdl2::rect::FRect,
+    parent: FRect,
     ratio_priority: AspectRatioPreferredDirection,
-) -> Result<Option<sdl2::rect::FRect>, String> {
+) -> Result<FRect, String> {
     let (max_w, max_h) = widget.max()?;
     let (min_w, min_h) = widget.min()?;
     let (preferred_portion_w, preferred_portion_h) = widget.preferred_portion();
-    let pre_clamp_w = preferred_portion_w.get(parent.width());
-    let pre_clamp_h = preferred_portion_h.get(parent.height());
+    let pre_clamp_w = preferred_portion_w.get(parent.w);
+    let pre_clamp_h = preferred_portion_h.get(parent.h);
     let mut w = clamp(pre_clamp_w, min_w, max_w);
     let mut h = clamp(pre_clamp_h, min_h, max_h);
 
@@ -265,26 +272,23 @@ pub fn place(
         }
     }
 
-    if w == 0. || h == 0. {
-        return Ok(None);
-    }
-
     let x_offset = crate::util::length::place(
         w,
-        parent.width(),
+        parent.w,
         widget.min_w_fail_policy(),
         widget.max_w_fail_policy(),
     );
     let y_offset = crate::util::length::place(
         h,
-        parent.height(),
+        parent.h,
         widget.min_h_fail_policy(),
         widget.max_h_fail_policy(),
     );
-    Ok(Some(sdl2::rect::FRect::new(
-        parent.x() + x_offset,
-        parent.y() + y_offset,
+
+    Ok(FRect {
+        x: parent.x + x_offset,
+        y: parent.y + y_offset,
         w,
         h,
-    )))
+    })
 }

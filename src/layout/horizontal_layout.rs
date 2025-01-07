@@ -1,5 +1,3 @@
-use sdl2::rect::FRect;
-
 use crate::{
     util::length::{
         clamp, MaxLen, MaxLenFailPolicy, MaxLenPolicy, MinLen, MinLenFailPolicy, MinLenPolicy,
@@ -46,19 +44,18 @@ impl<'sdl> Default for HorizontalLayout<'sdl> {
 macro_rules! impl_widget_fn {
     ($fn_name:ident) => {
         fn $fn_name(&mut self, mut event: WidgetEvent) -> Result<(), String> {
-            let position = match event.position {
-                Some(v) => v,
-                None => {
-                    // even if there is no draw position, still always propagate all
-                    // events to all children
-                    for elem in self.elems.iter_mut() {
-                        let mut sub_event = event.sub_event(None);
-                        sub_event.aspect_ratio_priority = crate::util::length::AspectRatioPreferredDirection::HeightFromWidth;
-                        elem.$fn_name(sub_event)?;
-                    }
-                    return Ok(());
+            let is_pos_non_empty: Option<sdl2::rect::Rect> = event.position.into();
+            if let None = is_pos_non_empty {
+                // even if there is no draw position, still always propagate all
+                // events to all children. consistency
+                for elem in self.elems.iter_mut() {
+                    let mut sub_event = event.sub_event(event.position);
+                    sub_event.aspect_ratio_priority =
+                        crate::util::length::AspectRatioPreferredDirection::HeightFromWidth;
+                    elem.$fn_name(sub_event)?;
                 }
-            };
+                return Ok(());
+            }
 
             // collect info from child components
             let mut info: Vec<ChildInfo> = vec![ChildInfo::default(); self.elems.len()];
@@ -85,7 +82,7 @@ macro_rules! impl_widget_fn {
                 info.width = info.preferred_horizontal.weighted_portion(
                     sum_preferred_horizontal,
                     self.elems.len(),
-                    position.width(),
+                    event.position.w,
                 );
                 if info.width < info.min_horizontal {
                     // it is being made larger than it would prefer.
@@ -113,7 +110,7 @@ macro_rules! impl_widget_fn {
                 sum_display_width += info.width;
             }
 
-            let horizontal_space = if sum_display_width < position.width() {
+            let horizontal_space = if sum_display_width < event.position.w {
                 if self.elems.len() == 0 {
                     return Ok(());
                 }
@@ -121,16 +118,17 @@ macro_rules! impl_widget_fn {
                 if self.elems.len() == 1 {
                     let position = crate::widget::widget::place(
                         self.elems[0],
-                        position,
+                        event.position,
                         crate::util::length::AspectRatioPreferredDirection::HeightFromWidth,
                     )?;
                     let mut sub_event = event.sub_event(position);
-                    sub_event.aspect_ratio_priority = crate::util::length::AspectRatioPreferredDirection::HeightFromWidth;
+                    sub_event.aspect_ratio_priority =
+                        crate::util::length::AspectRatioPreferredDirection::HeightFromWidth;
                     self.elems[0].$fn_name(sub_event)?;
                     return Ok(());
                 }
 
-                let extra_space = position.width() - sum_display_width;
+                let extra_space = event.position.w - sum_display_width;
                 debug_assert!(self.elems.len() > 0);
                 let num_spaces = self.elems.len() as u32 - 1;
 
@@ -141,7 +139,7 @@ macro_rules! impl_widget_fn {
                 0.
             };
 
-            let mut x_pos = position.x();
+            let mut x_pos = event.position.x;
             let mut e_err_accumulation = 0f32;
             for (elem, info) in self.elems.iter_mut().zip(info.iter_mut()) {
                 // handle accumulation of errors. this is needed for things to look pixel perfect with many children
@@ -151,7 +149,7 @@ macro_rules! impl_widget_fn {
                     info.width += 1.;
                     e_err_accumulation -= 1.;
                 }
-                let pre_clamp_height = info.preferred_vertical.get(position.height());
+                let pre_clamp_height = info.preferred_vertical.get(event.position.h);
                 let mut height = clamp(pre_clamp_height, info.min_vertical, info.max_vertical);
                 if let Some(new_h) = elem.preferred_height_from_width(info.width) {
                     let new_h = new_h?;
@@ -160,27 +158,19 @@ macro_rules! impl_widget_fn {
                     } else {
                         info.max_vertical.strictest(MaxLen(pre_clamp_height))
                     };
-                    height = clamp(
-                        new_h,
-                        info.min_vertical,
-                        new_h_max_clamp,
-                    );
+                    height = clamp(new_h, info.min_vertical, new_h_max_clamp);
                 }
 
                 let y = crate::util::length::place(
                     height,
-                    position.height(),
+                    event.position.h,
                     elem.min_h_fail_policy(),
                     elem.max_h_fail_policy(),
-                ) + position.y();
+                ) + event.position.y;
 
-                let position = if info.width != 0. && height != 0. {
-                    Some(FRect::new(x_pos, y, info.width, height))
-                } else {
-                    None
-                };
-                let mut sub_event = event.sub_event(position);
-                sub_event.aspect_ratio_priority = crate::util::length::AspectRatioPreferredDirection::HeightFromWidth;
+                let mut sub_event = event.sub_event(crate::util::rect::FRect {x: x_pos, y, w: info.width, h: height});
+                sub_event.aspect_ratio_priority =
+                    crate::util::length::AspectRatioPreferredDirection::HeightFromWidth;
                 elem.$fn_name(sub_event)?;
                 x_pos += info.width;
                 x_pos += horizontal_space as f32;
@@ -192,7 +182,7 @@ macro_rules! impl_widget_fn {
 
 impl<'sdl> Widget for HorizontalLayout<'sdl> {
     fn preferred_portion(&self) -> (PreferredPortion, PreferredPortion) {
-        (self.preferred_w, self.preferred_h)    
+        (self.preferred_w, self.preferred_h)
     }
 
     fn min(&mut self) -> Result<(MinLen, MinLen), String> {

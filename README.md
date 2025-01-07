@@ -27,15 +27,10 @@ Although sizing information is recalculated each frame, widgets should cache and
 
 ## std-lib
 
-These default widgets have been implemented:
-
-Layouts:
+Widgets
  - [vertical layout](./src/layout/vertical_layout.rs)
  - [horizontal layout](./src/layout/horizontal_layout.rs)
- - [stacked layout](./src/layout/stacked_layout.rs)
  - [scroll area](./src/layout/scroller.rs)
-
-Widgets
  - [debug](./src/widget/debug.rs), for testing sizing
  - [strut](./src/widget/strut.rs), forces spaces
  - [background](./src/widget/background.rs), parallel software rendering of a background texture

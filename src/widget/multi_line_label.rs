@@ -2,7 +2,7 @@ use sdl2::{pixels::Color, rect::Rect, render::TextureCreator, video::WindowConte
 
 use crate::util::{
     font::MultiLineFontStyle,
-    length::{frect_to_rect, MaxLenFailPolicy, MinLenFailPolicy, PreferredPortion},
+    length::{MaxLenFailPolicy, MinLenFailPolicy, PreferredPortion},
 };
 
 use super::widget::{Widget, WidgetEvent};
@@ -92,7 +92,7 @@ impl<'sdl, 'state> MultiLineLabel<'sdl, 'state> {
 
 impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
     fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
-        let position = match frect_to_rect(event.position) {
+        let position: sdl2::rect::Rect = match event.position.into() {
             Some(v) => v,
             None => return Ok(()), // no input handling
         };
@@ -132,7 +132,7 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
         if query.height <= position.height() {
             let excess = position.height() - query.height;
             let excess = excess as f32;
-            let excess = excess / 2.;
+            let excess = excess * self.max_h_policy.0;
             let excess = excess.round() as i32;
             event.canvas.copy(
                 txt,

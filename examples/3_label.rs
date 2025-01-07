@@ -3,7 +3,7 @@ use std::{cell::Cell, fs::File, io::Read, path::Path};
 use compact_str::CompactString;
 use rand::Rng;
 use sdl2::pixels::Color;
-use tiny_sdl2_gui::{layout::{horizontal_layout::HorizontalLayout, stacked_layout::{StackedLayout, StackedLayoutLiteralSizing, StackedLayoutSizingPolicy}, vertical_layout::VerticalLayout}, util::{font::{FontManager, SingleLineTextRenderType, TextRenderer}, length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy}}, widget::{background::{SoftwareRenderBackground, Wood}, multi_line_label::{MultiLineLabel, MultiLineMinHeightFailPolicy}, single_line_label::{DefaultSingleLineLabelState, SingleLineLabel}, texture::AspectRatioFailPolicy, widget::{draw_gui, update_gui, SDLEvent}}};
+use tiny_sdl2_gui::{layout::{horizontal_layout::HorizontalLayout, vertical_layout::VerticalLayout}, util::{font::{FontManager, SingleLineTextRenderType, TextRenderer}, length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy}}, widget::{background::{BackgroundSizingPolicy, SoftwareRenderBackground, Wood}, debug::CustomSizingControl, multi_line_label::{MultiLineLabel, MultiLineMinHeightFailPolicy}, single_line_label::{DefaultSingleLineLabelState, SingleLineLabel}, texture::AspectRatioFailPolicy, widget::{draw_gui, update_gui, SDLEvent}}};
 
 
 #[path = "example_common/mod.rs"]
@@ -91,31 +91,22 @@ fn main() -> std::process::ExitCode {
     let multiline_string_displayed = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.".to_owned();
     let mut multiline_widget = MultiLineLabel::new(&multiline_string_displayed, 20, Color::WHITE, Box::new(TextRenderer::new(&font_manager)), &sdl.texture_creator);
     multiline_widget.min_h_policy = MultiLineMinHeightFailPolicy::CutOff(1.0);
+    multiline_widget.max_h_policy = MaxLenFailPolicy::NEGATIVE;
 
     // ======================== BUILD GUI ======================================
 
     let mut layout = VerticalLayout::default();
     let mut bottom_layout = HorizontalLayout::default();
-    let mut top_layout = StackedLayout::default();
-    top_layout.sizing_policy = StackedLayoutSizingPolicy::Literal(StackedLayoutLiteralSizing::default());
 
     let mut rng = rand::thread_rng();
     let random_number: u32 = rng.gen();
+    let mut top = SoftwareRenderBackground::new(&mut top_label, Wood::new(random_number), &sdl.texture_creator);
+    top.sizing_policy = BackgroundSizingPolicy::Custom(CustomSizingControl::default()); // expand
+    top.set_color_mod((200, 200, 200)); // dim a bit
 
-    #[cfg(feature = "noise")]
-    let mut noise_background = SoftwareRenderBackground::new(Wood::new(random_number), &sdl.texture_creator);
-    #[cfg(feature = "noise")]
-    noise_background.set_color_mod((200, 200, 200)); // dim a bit
-    #[cfg(feature = "noise")]
-    top_layout.elems.push(&mut noise_background);
-
-    top_layout.elems.push(&mut top_label);
-    layout.elems.push(&mut top_layout);
-
+    layout.elems.push(&mut top);
     layout.elems.push(&mut middle_label);
-
     layout.elems.push(&mut multiline_widget);
-
     bottom_layout.elems.push(&mut bottom_left_label);
     bottom_layout.elems.push(&mut bottom_right_label);
     layout.elems.push(&mut bottom_layout);

@@ -2,8 +2,6 @@ use sdl2::keyboard::{Keycode, Mod};
 
 use crate::widget::widget::{SDLEvent, WidgetEvent};
 
-use super::length::frect_to_rect;
-
 #[derive(Clone, Copy)]
 pub struct FocusID(u64);
 
@@ -86,7 +84,8 @@ impl FocusManager {
 
                     // if event is consumed, it's considered not over this widget for focus purposes
                     if sdl_input.available() { 
-                        if let Some(position) = frect_to_rect(event.position) {
+                        let position: Option<sdl2::rect::Rect> = event.position.into();
+                        if let Some(position) = position {
                             let point_contained_in_clipping_rect = match event.canvas.clip_rect() {
                                 sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
                                 sdl2::render::ClippingRect::Zero => false,

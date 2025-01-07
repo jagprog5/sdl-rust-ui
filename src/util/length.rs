@@ -146,7 +146,7 @@ pub fn place(
 /// what is the preferred portion of the parent's length that this length should
 /// take up. in cases where multiple portions are competing, a weighted portion
 /// is used (and as a convention, should add up to 1).
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct PreferredPortion(pub f32);
 
 impl From<f32> for PreferredPortion {
@@ -242,25 +242,10 @@ impl AspectRatioPreferredDirection {
     }
 
     pub fn height_from_width(ratio: f32, w: f32) -> f32 {
-        w / ratio
-    }
-}
-
-/// positioning and sizing stays as floats, until just before rendering /
-/// updating, only then is it converted to integers
-/// 
-/// this will round away from 0 for position and size. if the size rounds to a
-/// zero area, then None is returned
-pub fn frect_to_rect(rect: Option<sdl2::rect::FRect>) -> Option<sdl2::rect::Rect> {
-    let rect = match rect {
-        Some(v) => v,
-        None => return None,
-    };
-    let next_w = rect.width().round();
-    let next_h = rect.height().round();
-    if next_w < 1. || next_h < 1. {
-        None
-    } else {
-        Some(sdl2::rect::Rect::new(rect.x().round() as i32, rect.y().round() as i32, next_w as u32, next_h as u32))
+        if ratio == 0. {
+            0. // guard div
+        } else {
+            w / ratio
+        }
     }
 }

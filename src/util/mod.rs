@@ -3,3 +3,4 @@ pub mod font;
 pub mod focus;
 pub mod render;
 pub mod length;
+pub mod rect;

@@ -1,12 +1,11 @@
 use sdl2::{
     pixels::{Color, PixelFormatEnum},
-    rect::FRect,
     render::{Canvas, Texture, TextureCreator},
     video::{Window, WindowContext},
 };
 
 use crate::util::{
-    length::{frect_to_rect, MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy, PreferredPortion},
+    length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy, PreferredPortion},
     render::{
         bottom_right_center_seeking_rect_points, center_seeking_rect_points, interpolate_color,
         up_left_center_seeking_rect_points,
@@ -37,8 +36,8 @@ pub struct Bevel {
     pub width: u32,
 }
 
-impl Bevel {
-    pub fn new() -> Self {
+impl Default for Bevel {
+    fn default() -> Self {
         Self {
             top_left_inner_color: Color::RGB(50, 50, 50),
             top_left_outer_color: Color::RGB(255, 255, 255),
@@ -172,7 +171,7 @@ impl BorderStyle for Empty {
 
 // contains a widget within a border
 pub struct Border<'sdl> {
-    pub contains: &'sdl mut dyn Widget,
+    pub contained: &'sdl mut dyn Widget,
     style: Box<dyn BorderStyle>,
 
     texture: Option<Texture<'sdl>>,
@@ -191,7 +190,7 @@ impl<'sdl> Border<'sdl> {
         style: Box<dyn BorderStyle>,
     ) -> Self {
         Self {
-            contains,
+            contained: contains,
             creator,
             texture: Default::default(),
             prior_render_w_h: Default::default(),
@@ -202,7 +201,7 @@ impl<'sdl> Border<'sdl> {
 
 impl<'sdl> Widget for Border<'sdl> {
     fn preferred_portion(&self) -> (PreferredPortion, PreferredPortion) {
-        self.contains.preferred_portion()
+        self.contained.preferred_portion()
     }
 
     fn preferred_width_from_height(&mut self, pref_h: f32) -> Option<Result<f32, String>> {
@@ -217,7 +216,7 @@ impl<'sdl> Widget for Border<'sdl> {
             // typical case
             (sub_amount, pref_h - sub_amount)
         };
-        self.contains
+        self.contained
             .preferred_width_from_height(pref_h)
             .map(|some| some.map(|ok| ok + amount_subtracted))
     }
@@ -234,183 +233,131 @@ impl<'sdl> Widget for Border<'sdl> {
             // typical case
             (sub_amount, pref_w - sub_amount)
         };
-        self.contains
+        self.contained
             .preferred_height_from_width(pref_w)
             .map(|some| some.map(|ok| ok + amount_subtracted))
     }
 
     fn preferred_link_allowed_exceed_portion(&self) -> bool {
-        self.contains.preferred_link_allowed_exceed_portion()
+        self.contained.preferred_link_allowed_exceed_portion()
     }
 
     fn min_w_fail_policy(&self) -> MinLenFailPolicy {
-        self.contains.min_w_fail_policy()
+        self.contained.min_w_fail_policy()
     }
 
     fn min_h_fail_policy(&self) -> MinLenFailPolicy {
-        self.contains.min_h_fail_policy()
+        self.contained.min_h_fail_policy()
     }
 
     fn max_w_fail_policy(&self) -> MaxLenFailPolicy {
-        self.contains.max_w_fail_policy()
+        self.contained.max_w_fail_policy()
     }
 
     fn max_h_fail_policy(&self) -> MaxLenFailPolicy {
-        self.contains.max_h_fail_policy()
+        self.contained.max_h_fail_policy()
     }
 
     fn min(&mut self) -> Result<(MinLen, MinLen), String> {
-        let baseline = MinLen((self.style.width() * 2) as f32);
-        let m = self.contains.min()?;
-        Ok((m.0.combined(baseline), m.1.combined(baseline)))
+        self.contained.min()
     }
 
     fn max(&mut self) -> Result<(MaxLen, MaxLen), String> {
         let baseline = MaxLen((self.style.width() * 2) as f32);
-        let m = self.contains.max()?;
+        let m = self.contained.max()?;
         Ok((m.0.combined(baseline), m.1.combined(baseline)))
     }
 
     fn update(&mut self, mut event: WidgetEvent) -> Result<(), String> {
-        let position_for_child = match event.position {
-            Some(pos) => {
-                let width_sub = (self.style.width() * 2) as f32;
-                // checked sub for safety. sane caller should never call update with
-                // something which violates the minimum size. but it could happen?
-                let mut width_for_child = pos.width() - width_sub;
-                if width_for_child < 0. {
-                    width_for_child = 0.;
-                }
-
-                let mut height_for_child = pos.height() - width_sub;
-                if height_for_child < 0. {
-                    height_for_child = 0.;
-                }
-                let x_for_child = pos.x() + width_sub / 2.;
-                let y_for_child = pos.y() + width_sub / 2.;
-
-                if width_for_child == 0. || height_for_child == 0. {
-                    None
-                } else {
-                    Some(FRect::new(
-                        x_for_child,
-                        y_for_child,
-                        width_for_child,
-                        height_for_child,
-                    ))
-                }
-            }
-            None => None,
+        let style_width = self.style.width() as f32;
+        let position_for_child = crate::util::rect::FRect {
+            x: event.position.x + style_width,
+            y: event.position.y + style_width,
+            w: event.position.w - style_width * 2.,
+            h: event.position.h - style_width * 2.,
         };
-
-        // deliberately not culling on out of bounds for UPDATE, since the
-        // contained widget could still have functionality even if off screen
-        self.contains.update(event.sub_event(position_for_child))?;
-        Ok(())
+        self.contained.update(event.sub_event(position_for_child))
     }
 
     fn draw(&mut self, mut event: WidgetEvent) -> Result<(), String> {
-        let pos = match event.position {
-            Some(v) => v,
-            None => {
-                // can't draw the border with zero area but still pass to
-                // contained to be consistent with update
-                return self.contains.draw(event);
-            }
-        };
-        
-        let cache = self.texture.take().filter(|_texture| {
-            self.prior_render_w_h.0 == pos.width() as u32
-                && self.prior_render_w_h.1 == pos.height() as u32
-        });
+        let pos: Option<sdl2::rect::Rect> = event.position.into();
 
-        let texture = match cache {
-            Some(v) => {
-                v // texture can be reused
-            }
-            None => {
-                // must re-render the texture before use.
-                self.prior_render_w_h = (pos.width() as u32, pos.height() as u32); // set here and not at end. don't retry on fail
-
-                // maybe? slightly easier on memory to free old texture before creating new one
-                // self.texture = None;
-                let mut texture = self
-                    .creator
-                    .create_texture_target(
-                        PixelFormatEnum::ARGB8888,
-                        pos.width() as u32,
-                        pos.height() as u32,
-                    )
-                    .map_err(|e| e.to_string())?;
-                // the border is drawn over top of the contained texture. but the
-                // transparent part in the middle should still show through
-                texture.set_blend_mode(sdl2::render::BlendMode::Blend);
-
-                let mut e_out: Option<String> = None;
-
-                event
-                    .canvas
-                    .with_texture_canvas(&mut texture, |canvas| {
-                        canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
-                        canvas.clear(); // required to prevent flickering
-
-                        if let Err(e) = self.style.draw(canvas) {
-                            e_out = Some(e);
+        match pos {
+            Some(pos) => {
+                // non zero position - draw the border and contained
+                let cache = self.texture.take().filter(|_texture| {
+                    self.prior_render_w_h.0 == pos.width() as u32
+                        && self.prior_render_w_h.1 == pos.height() as u32
+                });
+    
+                let texture = match cache {
+                    Some(v) => {
+                        v // texture can be reused
+                    }
+                    None => {
+                        // must re-render the texture before use.
+                        self.prior_render_w_h = (pos.width() as u32, pos.height() as u32); // set here and not at end. don't retry on fail
+    
+                        // maybe? slightly easier on memory to free old texture before creating new one
+                        // self.texture = None;
+                        let mut texture = self
+                            .creator
+                            .create_texture_target(
+                                PixelFormatEnum::ARGB8888,
+                                pos.width() as u32,
+                                pos.height() as u32,
+                            )
+                            .map_err(|e| e.to_string())?;
+                        // the border is drawn over top of the contained texture. but the
+                        // transparent part in the middle should still show through
+                        texture.set_blend_mode(sdl2::render::BlendMode::Blend);
+    
+                        let mut e_out: Option<String> = None;
+    
+                        event
+                            .canvas
+                            .with_texture_canvas(&mut texture, |canvas| {
+                                canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
+                                canvas.clear(); // required to prevent flickering
+    
+                                if let Err(e) = self.style.draw(canvas) {
+                                    e_out = Some(e);
+                                }
+                            })
+                            .map_err(|e| e.to_string())?;
+    
+                        if let Some(e) = e_out {
+                            return Err(e);
                         }
-                    })
-                    .map_err(|e| e.to_string())?;
+    
+                        texture
+                    }
+                };
 
-                if let Some(e) = e_out {
-                    return Err(e);
-                }
+                let style_width = self.style.width() as f32;
+                let position_for_child = crate::util::rect::FRect {
+                    x: event.position.x + style_width,
+                    y: event.position.y + style_width,
+                    w: event.position.w - style_width * 2.,
+                    h: event.position.h - style_width * 2.,
+                };
+                self.contained.draw(event.sub_event(position_for_child))?;
 
-                texture
-            }
-        };
-
-        // same calc as was used by update
-        let width_sub = (self.style.width() * 2) as f32;
-        let mut width_for_child = pos.width() - width_sub;
-        if width_for_child < 0. {
-            width_for_child = 0.;
+                event.canvas.copy(&texture, None, Some(pos))?;
+                self.texture = Some(texture);
+            },
+            None => {
+                // keep consist with update and still call draw no matter what
+                let style_width = self.style.width() as f32;
+                let position_for_child = crate::util::rect::FRect {
+                    x: event.position.x + style_width,
+                    y: event.position.y + style_width,
+                    w: event.position.w - style_width * 2.,
+                    h: event.position.h - style_width * 2.,
+                };
+                self.contained.draw(event.sub_event(position_for_child))?;
+            },
         }
-
-        let mut height_for_child = pos.height() - width_sub;
-        if height_for_child < 0. {
-            height_for_child = 0.;
-        }
-        let x_for_child = pos.x() + width_sub / 2.;
-        let y_for_child = pos.y() + width_sub / 2.;
-
-        let position_for_child = if width_for_child == 0. || height_for_child == 0. {
-            None
-        } else {
-            Some(FRect::new(
-                x_for_child,
-                y_for_child,
-                width_for_child,
-                height_for_child,
-            ))
-        };
-
-        self.contains.draw(event.sub_event(position_for_child))?;
-
-        // all of the positioning and sizing is kept in float form, but once
-        // drawing occurs it should draw at integer coordinates. it is expected
-        // that the child will do the same (as should all widgets)
-        let mut err: Option<String> = None;
-        frect_to_rect(Some(pos)).map(|pos| {
-            if let Err(e) = event.canvas.copy(&texture, None, Some(pos)) {
-                err = Some(e);
-            }
-        });
-
-        if let Some(e) = err {
-            return Err(e);
-        }
-
-        self.texture = Some(texture);
-
         Ok(())
     }
 }

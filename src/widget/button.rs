@@ -1,7 +1,5 @@
 use crate::util::focus::FocusID;
-use crate::util::length::{
-    frect_to_rect, MaxLen, MinLen
-};
+use crate::util::length::{MaxLen, MinLen};
 
 use super::checkbox::{TextureVariantSizeCache, TextureVariantStyle};
 use super::single_line_label::SingleLineLabel;
@@ -9,7 +7,6 @@ use super::widget::{Widget, WidgetEvent};
 
 use sdl2::pixels::Color;
 
-use sdl2::rect::FRect;
 use sdl2::{
     rect::Point,
     render::{Canvas, TextureCreator},
@@ -45,7 +42,9 @@ impl<'sdl, 'state> ButtonStyle<ButtonTextureVariant> for DefaultButtonStyle<'sdl
         &self.label
     }
 
-    fn as_mut_texture_variant_style(&mut self) -> &mut dyn TextureVariantStyle<ButtonTextureVariant> {
+    fn as_mut_texture_variant_style(
+        &mut self,
+    ) -> &mut dyn TextureVariantStyle<ButtonTextureVariant> {
         self
     }
 }
@@ -110,7 +109,12 @@ impl<'sdl, 'state> TextureVariantStyle<ButtonTextureVariant> for DefaultButtonSt
         // draw foreground
         let mut event = WidgetEvent {
             focus_manager: None,
-            position: Some(FRect::new(0., 0., size.0 as f32, size.1 as f32)),
+            position: crate::util::rect::FRect {
+                x: 0.,
+                y: 0.,
+                w: size.0 as f32,
+                h: size.1 as f32,
+            },
             aspect_ratio_priority: Default::default(),
             events: Default::default(),
             canvas,
@@ -135,7 +139,7 @@ pub struct Button<'sdl> {
     pub focus_id: FocusID,
     pressed: bool, // internal state for drawing
 
-    style: Box<dyn ButtonStyle<ButtonTextureVariant> +'sdl>,
+    style: Box<dyn ButtonStyle<ButtonTextureVariant> + 'sdl>,
     creator: &'sdl TextureCreator<WindowContext>,
     idle: TextureVariantSizeCache<'sdl, ButtonTextureVariant>,
     focused: TextureVariantSizeCache<'sdl, ButtonTextureVariant>,
@@ -197,16 +201,22 @@ impl<'sdl> Widget for Button<'sdl> {
     }
 
     fn preferred_width_from_height(&mut self, pref_h: f32) -> Option<Result<f32, String>> {
-        self.style.as_mut_widget().preferred_width_from_height(pref_h)
+        self.style
+            .as_mut_widget()
+            .preferred_width_from_height(pref_h)
     }
 
     /// implementors should use this to enforce an aspect ratio
     fn preferred_height_from_width(&mut self, pref_w: f32) -> Option<Result<f32, String>> {
-        self.style.as_mut_widget().preferred_height_from_width(pref_w)
+        self.style
+            .as_mut_widget()
+            .preferred_height_from_width(pref_w)
     }
 
     fn preferred_link_allowed_exceed_portion(&self) -> bool {
-        self.style.as_widget().preferred_link_allowed_exceed_portion()
+        self.style
+            .as_widget()
+            .preferred_link_allowed_exceed_portion()
     }
 
     fn update(&mut self, event: WidgetEvent) -> Result<(), String> {
@@ -215,19 +225,22 @@ impl<'sdl> Widget for Button<'sdl> {
             &mut self.pressed,
             self.focus_id,
             event,
-            fun
+            fun,
         )
     }
 
     fn draw(&mut self, event: super::widget::WidgetEvent) -> Result<(), String> {
-        let position = match frect_to_rect(event.position) {
+        let position: sdl2::rect::Rect = match event.position.into() {
             Some(v) => v,
             // the rest of this is just for drawing or being clicked, both
             // require non-zero area position
             None => return Ok(()),
         };
 
-        let focused = event.focus_manager.map(|f| f.is_focused(self.focus_id)).unwrap_or(false);
+        let focused = event
+            .focus_manager
+            .map(|f| f.is_focused(self.focus_id))
+            .unwrap_or(false);
         let pressed = self.pressed;
 
         let variant = if focused {

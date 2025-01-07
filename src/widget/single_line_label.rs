@@ -14,7 +14,7 @@ use crate::widget::{
     widget::{Widget, WidgetEvent},
 };
 
-use super::texture::texture_draw_f;
+use super::texture::texture_draw;
 
 /// caches the texture and what was used to create the texture
 struct SingleLineLabelCache<'sdl> {
@@ -322,7 +322,7 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
     }
 
     fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
-        let position = match event.position {
+        let position: sdl2::rect::Rect = match event.position.into() {
             Some(v) => v,
             None => return Ok(()), // no input handling
         };
@@ -341,7 +341,7 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
             // more consistent; regardless of what the aspect ratio fail policy
             // (padding bars), give a background over the entirety of the label
             event.canvas.set_draw_color(bg);
-            event.canvas.fill_frect(position)?;
+            event.canvas.fill_rect(position)?;
         }
 
         let cache = match self.cache.take().filter(|cache| {
@@ -364,15 +364,16 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
         };
 
         let txt = &cache.texture;
-        texture_draw_f(
+        let r = texture_draw(
             txt,
             &self.aspect_ratio_fail_policy,
             event.canvas,
-            None,
-            position,
-        )?;
+            event.position,
+        );
 
         self.cache = Some(cache);
+        r?;
+
         Ok(())
     }
 }

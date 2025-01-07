@@ -6,7 +6,7 @@ use sdl2::{
 
 use crate::util::{
     focus::{FocusID, FocusManager},
-    length::{frect_to_rect, MaxLen, MinLen},
+    length::{MaxLen, MinLen},
 };
 
 use super::widget::{Widget, WidgetEvent};
@@ -306,7 +306,7 @@ where
     T: FnMut() -> Result<(), String> + ?Sized,
 {
     FocusManager::default_widget_focus_behavior(focus_id, &mut event);
-    let position = match frect_to_rect(event.position) {
+    let position: sdl2::rect::Rect = match event.position.into() {
         Some(v) => v,
         // the rest of this is just for drawing or being clicked, both
         // require non-zero area position
@@ -440,7 +440,7 @@ impl<'sdl, 'state> Widget for CheckBox<'sdl, 'state> {
     }
 
     fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
-        let position = match frect_to_rect(event.position) {
+        let position: sdl2::rect::Rect = match event.position.into() {
             Some(v) => v,
             // the rest of this is just for drawing or being clicked, both
             // require non-zero area position

@@ -4,14 +4,14 @@ use sdl2::{
     rect::{Point, Rect},
 };
 
-use crate::util::length::{
-    frect_to_rect, AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy, PreferredPortion
+use crate::util::length::{AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy, PreferredPortion
 };
 
 use super::widget::{Widget, WidgetEvent};
 
 /// super simple debug widget. draws a outline at its position. use for testing
 /// purposes. brief flash when clicked
+#[derive(Debug, Clone, Copy)]
 pub struct Debug {
     pub min_w: MinLen,
     pub min_h: MinLen,
@@ -26,6 +26,10 @@ pub struct Debug {
     pub max_h_fail_policy: MaxLenFailPolicy,
     pub preferred_link_allowed_exceed_portion: bool,
 }
+
+/// better name for where it isn't being used as a widget, just as a member for
+/// sizing info
+pub type CustomSizingControl = Debug;
 
 impl Default for Debug {
     fn default() -> Self {
@@ -135,7 +139,8 @@ impl Widget for Debug {
     fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
         // as always, snap to integer grid before rendering / using,
         // plus checks that draw area is non-zero
-        let pos = match frect_to_rect(event.position){
+        let pos: Option<sdl2::rect::Rect> = event.position.into();
+        let pos = match pos {
             Some(v) => v,
             None => return Ok(()),
         };

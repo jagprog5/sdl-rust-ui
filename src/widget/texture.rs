@@ -1,9 +1,7 @@
 use std::ops::Not;
 
-use sdl2::rect::{FRect, Rect};
-
 use crate::util::length::{
-    frect_to_rect, AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MaxLenPolicy, MinLen,
+    AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MaxLenPolicy, MinLen,
     MinLenFailPolicy, MinLenPolicy, PreferredPortion,
 };
 
@@ -156,7 +154,7 @@ impl<'sdl> Widget for Texture<'sdl> {
         if self.request_aspect_ratio.not() {
             return None;
         }
-
+        
         let q = self.texture.query();
         let ratio = q.width as f32 / q.height as f32;
         Some(Ok(AspectRatioPreferredDirection::width_from_height(
@@ -178,163 +176,63 @@ impl<'sdl> Widget for Texture<'sdl> {
     }
 
     fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
-        let position = match frect_to_rect(event.position) {
-            Some(v) => v,
-            None => return Ok(()), // has no other functionality other than drawing
-        };
         texture_draw(
-            &self.texture,
+            self.texture,
             &self.aspect_ratio_fail_policy,
             event.canvas,
-            None,
-            position,
+            event.position,
         )
     }
 }
 
-pub fn texture_draw(
+pub(crate) fn texture_draw(
     texture: &sdl2::render::Texture,
-    aspect_ratio_policy: &AspectRatioFailPolicy,
+    aspect_ratio_fail_policy: &AspectRatioFailPolicy,
     canvas: &mut sdl2::render::WindowCanvas,
-    src: Option<sdl2::rect::Rect>,
-    dst: sdl2::rect::Rect,
+    dst: crate::util::rect::FRect,
 ) -> Result<(), String> {
-    let (src_x, src_y, src_w, src_h) = match src {
-        None => {
-            let query = texture.query();
-            (0, 0, query.width, query.height)
-        }
-        Some(v) => (v.x(), v.y(), v.width(), v.height()),
-    };
+    // dst is kept as float form until just before canvas copy. needed or else
+    // it is jumpy
 
-    if src_w == 0 || src_h == 0 {
-        return Ok(()); // can't draw empty. also guards against div by 0
+    let query = texture.query();
+    if query.width == 0 || query.height == 0 {
+        return Ok(()); // can't draw empty texture (and guard div 0)
     }
 
-    match aspect_ratio_policy {
-        AspectRatioFailPolicy::Stretch => canvas.copy(texture, None, Some(dst)),
-        AspectRatioFailPolicy::ZoomOut((zoom_x, zoom_y)) => {
-            let src_aspect_ratio = src_w as f32 / src_h as f32;
-            let dst_aspect_ratio = dst.width() as f32 / dst.height() as f32;
-
-            if src_aspect_ratio > dst_aspect_ratio {
-                // padding at the top and bottom; scale down the size of the
-                // src so the width matches the destination
-                let scale_down = dst.width() as f32 / src_w as f32;
-                let dst_width = (src_w as f32 * scale_down).round() as u32;
-                let dst_height = (src_h as f32 * scale_down).round() as u32;
-                if dst_width == 0 || dst_height == 0 {
-                    return Ok(());
-                }
-
-                let dst_y_offset = ((dst.height() - dst_height) as f32 * zoom_y) as i32;
-                canvas.copy(
-                    texture,
-                    Rect::new(src_x, src_y, src_w, src_h),
-                    Some(Rect::new(
-                        dst.x(),
-                        dst.y() + dst_y_offset,
-                        dst_width,
-                        dst_height,
-                    )),
-                )
-            } else {
-                // padding at the left and right; scale down the size of the
-                // src so the height matches the destination
-                let scale_down = dst.height() as f32 / src_h as f32;
-                let dst_width = (src_w as f32 * scale_down).round() as u32;
-                let dst_height = (src_h as f32 * scale_down).round() as u32;
-                if dst_width == 0 || dst_height == 0 {
-                    return Ok(());
-                }
-
-                let dst_x_offset = ((dst.width() - dst_width) as f32 * zoom_x) as i32;
-                canvas.copy(
-                    texture,
-                    Rect::new(src_x, src_y, src_w, src_h),
-                    Some(Rect::new(
-                        dst.x() + dst_x_offset,
-                        dst.y(),
-                        dst_width,
-                        dst_height,
-                    )),
-                )
-            }
-        }
-        AspectRatioFailPolicy::ZoomIn((zoom_x, zoom_y)) => {
-            let src_aspect_ratio = src_w as f32 / src_h as f32;
-            let dst_aspect_ratio = dst.width() as f32 / dst.height() as f32;
-
-            if src_aspect_ratio > dst_aspect_ratio {
-                let width =
-                    ((dst.width() as f32 / dst.height() as f32) * src_h as f32).round() as u32;
-                let x = (((src_w as i32 - width as i32) as f32) * zoom_x) as i32;
-                canvas.copy(
-                    texture,
-                    Some(Rect::new(src_x + x, src_y, width, src_h)),
-                    Some(dst),
-                )
-            } else {
-                let height =
-                    ((src_w as f32 / dst.width() as f32) * dst.height() as f32).round() as u32;
-                let y = ((src_h as i32 - height as i32) as f32 * zoom_y) as i32;
-                canvas.copy(
-                    texture,
-                    Some(Rect::new(src_x, src_y + y, src_w, height)),
-                    Some(dst),
-                )
-            }
-        }
-    }
-}
-
-pub fn texture_draw_f(
-    texture: &sdl2::render::Texture,
-    aspect_ratio_policy: &AspectRatioFailPolicy,
-    canvas: &mut sdl2::render::WindowCanvas,
-    src: Option<sdl2::rect::Rect>,
-    dst: sdl2::rect::FRect,
-) -> Result<(), String> {
-    let (src_x, src_y, src_w, src_h) = match src {
-        None => {
-            let query = texture.query();
-            (0, 0, query.width, query.height)
-        }
-        Some(v) => (v.x(), v.y(), v.width(), v.height()),
-    };
-
-    if src_w == 0 || src_h == 0 {
-        return Ok(()); // can't draw empty. also guards against div by 0
-    }
-
-    match aspect_ratio_policy {
+    match aspect_ratio_fail_policy {
         AspectRatioFailPolicy::Stretch => {
-            canvas.copy_f(texture, None, dst)
-        },
+            let dst: sdl2::rect::Rect = match dst.into() {
+                None => return Ok(()), // can't draw zero size
+                Some(v) => v,
+            };
+            canvas.copy(texture, None, Some(dst))
+        }
         AspectRatioFailPolicy::ZoomOut((zoom_x, zoom_y)) => {
-            let src_rect = Rect::new(src_x, src_y, src_w, src_h);
-            let src_w = src_w as f32;
-            let src_h = src_h as f32;
-            let src_aspect_ratio = src_w / src_h;
-            let dst_aspect_ratio = dst.width() / dst.height();
+            let src_w = query.width as f32;
+            let src_h = query.height as f32;
+            let src_aspect_ratio = src_w / src_h; // div guarded above
+            if dst.h == 0. {
+                return Ok(()); // guard div + can't drawn zero area texture
+            }
+            let dst_aspect_ratio = dst.w / dst.h;
 
             if src_aspect_ratio > dst_aspect_ratio {
                 // padding at the top and bottom; scale down the size of the
                 // src so the width matches the destination
-                let scale_down = dst.width() / src_w;
-                let dst_width = src_w * scale_down;
-                let dst_height = src_h * scale_down;
-                if dst_width == 0. || dst_height == 0. {
-                    return Ok(());
+                let scale_down = dst.w / src_w; // div guarded above
+                let dst_width = (src_w * scale_down).round() as u32;
+                let dst_height = (src_h * scale_down).round() as u32;
+                if dst_width == 0 || dst_height == 0 {
+                    return Ok(()); // zoomed out too much
                 }
 
-                let dst_y_offset = (dst.height() - dst_height) * zoom_y;
-                canvas.copy_f(
+                let dst_y_offset = ((dst.h - dst_height as f32) * zoom_y).round() as i32;
+                canvas.copy(
                     texture,
-                    src_rect,
-                    Some(FRect::new(
-                        dst.x(),
-                        dst.y() + dst_y_offset,
+                    None,
+                    Some(sdl2::rect::Rect::new(
+                        dst.x.round() as i32,
+                        dst.y.round() as i32 + dst_y_offset,
                         dst_width,
                         dst_height,
                     )),
@@ -342,47 +240,62 @@ pub fn texture_draw_f(
             } else {
                 // padding at the left and right; scale down the size of the
                 // src so the height matches the destination
-                let scale_down = dst.height() / src_h as f32;
-                let dst_width = src_w * scale_down;
-                let dst_height = src_h * scale_down;
-                if dst_width == 0. || dst_height == 0. {
-                    return Ok(());
+                let scale_down = dst.h / src_h; // div guarded above
+                let dst_width = (src_w * scale_down).round() as u32;
+                let dst_height = (src_h * scale_down).round() as u32;
+                if dst_width == 0 || dst_height == 0 {
+                    return Ok(()); // zoomed out too much
                 }
 
-                let dst_x_offset = (dst.width() - dst_width) as f32 * zoom_x;
-                canvas.copy_f(
+                let dst_x_offset = ((dst.w - dst_width as f32) * zoom_x) as i32;
+                canvas.copy(
                     texture,
-                    src_rect,
-                    Some(FRect::new(
-                        dst.x() + dst_x_offset,
-                        dst.y(),
+                    None,
+                    Some(sdl2::rect::Rect::new(
+                        dst.x.round() as i32 + dst_x_offset,
+                        dst.y.round() as i32,
                         dst_width,
                         dst_height,
                     )),
                 )
             }
-        },
+        }
         AspectRatioFailPolicy::ZoomIn((zoom_x, zoom_y)) => {
-            let src_aspect_ratio = src_w as f32 / src_h as f32;
-            let dst_aspect_ratio = dst.width() / dst.height();
+            let dst_sdl2: sdl2::rect::Rect = match dst.into() {
+                None => return Ok(()), // can't draw zero size
+                Some(v) => v,
+            };
+
+            let src_w = query.width as f32;
+            let src_h = query.height as f32;
+
+            let src_aspect_ratio = src_w / src_h; // guarded above
+            let dst_aspect_ratio = dst.w / dst.h; // guarded above by dst_sdl2
 
             if src_aspect_ratio > dst_aspect_ratio {
-                let width = (dst.width() / dst.height()) * src_h as f32;
-                let x = (src_w as f32 - width) * zoom_x;
-                canvas.copy_f(
+                let width = (dst_aspect_ratio * src_h).round() as u32;
+                if width == 0 {
+                    return Ok(()); // too extreme of a ratio
+                }
+                let x = ((src_w - width as f32) * zoom_x) as i32;
+                canvas.copy(
                     texture,
-                    Rect::new(src_x + x.round() as i32, src_y, src_w, src_h),
-                    Some(dst)
+                    Some(sdl2::rect::Rect::new(x, 0, width, query.height)),
+                    Some(dst_sdl2),
                 )
             } else {
-                let height = (src_w as f32 / dst.width()) * dst.height();
-                let y = (src_h as f32 - height) * zoom_y;
-                canvas.copy_f(
+                //                   V guarded above by dst_sdl2
+                let height = ((src_w / dst.w) * dst.h).round() as u32;
+                if height == 0 {
+                    return Ok(()); // too extreme of a ratio
+                }
+                let y = ((src_h - height as f32) * zoom_y) as i32;
+                canvas.copy(
                     texture,
-                    Rect::new(src_x, src_y + y.round() as i32, src_w, src_h),
-                    Some(dst),
+                    Some(sdl2::rect::Rect::new(0, y, query.width, height)),
+                    Some(dst_sdl2),
                 )
             }
-        },
+        }
     }
 }

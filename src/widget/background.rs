@@ -1,6 +1,6 @@
 use noise::{
-    utils::ColorGradient, Add, BasicMulti, Perlin, RotatePoint, ScaleBias, ScalePoint,
-    Seedable, TranslatePoint, Turbulence,
+    utils::ColorGradient, Add, BasicMulti, Perlin, RotatePoint, ScaleBias, ScalePoint, Seedable,
+    TranslatePoint, Turbulence,
 };
 #[cfg(feature = "noise")]
 use noise::{Cylinders, Fbm, MultiFractal, NoiseFn, OpenSimplex};
@@ -11,21 +11,134 @@ use sdl2::{
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
-pub struct SolidColorBackground {
-    pub color: Color,
+pub enum BackgroundSizingPolicy {
+    /// inherit sizing from the contained widget
+    Children,
+    /// states literally, ignoring the contained widget. the widget will then be
+    /// placed within the background's bound appropriately
+    Custom(CustomSizingControl),
 }
 
-impl Widget for SolidColorBackground {
+pub struct SolidColorBackground<'sdl> {
+    pub color: Color,
+    pub contained: &'sdl mut dyn Widget,
+    pub sizing_policy: BackgroundSizingPolicy,
+}
+
+impl<'sdl> Widget for SolidColorBackground<'sdl> {
+    fn update(&mut self, event: WidgetEvent) -> Result<(), String> {
+        self.contained.update(event)
+    }
+
     fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
         event.canvas.set_draw_color(self.color);
-        if let Some(pos) = crate::util::length::frect_to_rect(event.position) {
-            return event.canvas.fill_rect(pos);
+        let pos: Option<sdl2::rect::Rect> = event.position.into();
+        if let Some(pos) = pos {
+            event.canvas.fill_rect(pos)?;
         }
-        Ok(())
+        self.contained.draw(event)
+    }
+
+    fn min(&mut self) -> Result<(MinLen, MinLen), String> {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.min(),
+            BackgroundSizingPolicy::Custom(custom) => Ok((custom.min_w, custom.min_h)),
+        }
+    }
+
+    fn min_w_fail_policy(&self) -> MinLenFailPolicy {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.min_w_fail_policy(),
+            BackgroundSizingPolicy::Custom(custom) => custom.min_w_fail_policy,
+        }
+    }
+
+    fn min_h_fail_policy(&self) -> MinLenFailPolicy {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.min_h_fail_policy(),
+            BackgroundSizingPolicy::Custom(custom) => custom.min_h_fail_policy,
+        }
+    }
+
+    fn max(&mut self) -> Result<(MaxLen, MaxLen), String> {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.max(),
+            BackgroundSizingPolicy::Custom(custom) => Ok((custom.max_w, custom.max_h)),
+        }
+    }
+
+    fn max_w_fail_policy(&self) -> MaxLenFailPolicy {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.max_w_fail_policy(),
+            BackgroundSizingPolicy::Custom(custom) => custom.max_w_fail_policy,
+        }
+    }
+
+    fn max_h_fail_policy(&self) -> MaxLenFailPolicy {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.max_h_fail_policy(),
+            BackgroundSizingPolicy::Custom(custom) => custom.max_h_fail_policy,
+        }
+    }
+
+    fn preferred_portion(&self) -> (PreferredPortion, PreferredPortion) {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.preferred_portion(),
+            BackgroundSizingPolicy::Custom(custom) => (custom.preferred_w, custom.preferred_h),
+        }
+    }
+
+    fn preferred_width_from_height(&mut self, pref_h: f32) -> Option<Result<f32, String>> {
+        match &mut self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.preferred_width_from_height(pref_h),
+            BackgroundSizingPolicy::Custom(custom) => {
+                let ratio = match &custom.aspect_ratio {
+                    None => return None,
+                    Some(v) => v,
+                };
+
+                Some(Ok(AspectRatioPreferredDirection::width_from_height(
+                    *ratio, pref_h,
+                )))
+            }
+        }
+    }
+
+    fn preferred_height_from_width(&mut self, pref_w: f32) -> Option<Result<f32, String>> {
+        match &mut self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.preferred_height_from_width(pref_w),
+            BackgroundSizingPolicy::Custom(custom) => {
+                let ratio = match &custom.aspect_ratio {
+                    None => return None,
+                    Some(v) => v,
+                };
+
+                Some(Ok(AspectRatioPreferredDirection::height_from_width(
+                    *ratio, pref_w,
+                )))
+            }
+        }
+    }
+
+    fn preferred_link_allowed_exceed_portion(&self) -> bool {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => {
+                self.contained.preferred_link_allowed_exceed_portion()
+            }
+            BackgroundSizingPolicy::Custom(custom) => custom.preferred_link_allowed_exceed_portion,
+        }
     }
 }
 
-use super::widget::{Widget, WidgetEvent};
+use crate::util::length::{
+    AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy,
+    PreferredPortion,
+};
+
+use super::{
+    debug::CustomSizingControl,
+    widget::{place, Widget, WidgetEvent},
+};
 
 pub trait SoftwareRenderBackgroundStyle: Send + Sync {
     /// retrieve color at coordinate to draw a static texture
@@ -163,6 +276,13 @@ struct SoftwareRenderBackgroundCache<'sdl> {
 /// composed in a stacked layout.
 pub struct SoftwareRenderBackground<'sdl, Style: SoftwareRenderBackgroundStyle> {
     style: Style,
+    pub contained: &'sdl mut dyn Widget,
+
+    /// indicates the sizing information which will be used to position this
+    /// background and widget together. following this, the background then
+    /// places the contained using the sizing information provided by the
+    /// contained (two distinct steps)
+    pub sizing_policy: BackgroundSizingPolicy,
 
     color_mod: (u8, u8, u8),
 
@@ -171,9 +291,15 @@ pub struct SoftwareRenderBackground<'sdl, Style: SoftwareRenderBackgroundStyle> 
 }
 
 impl<'sdl, Style: SoftwareRenderBackgroundStyle> SoftwareRenderBackground<'sdl, Style> {
-    pub fn new(style: Style, creator: &'sdl TextureCreator<WindowContext>) -> Self {
+    pub fn new(
+        contained: &'sdl mut dyn Widget,
+        style: Style,
+        creator: &'sdl TextureCreator<WindowContext>,
+    ) -> Self {
         Self {
             style,
+            contained,
+            sizing_policy: BackgroundSizingPolicy::Children,
             creator,
             color_mod: (0xFF, 0xFF, 0xFF),
             cache: Default::default(),
@@ -195,93 +321,147 @@ impl<'sdl, Style: SoftwareRenderBackgroundStyle> SoftwareRenderBackground<'sdl, 
 }
 
 impl<'sdl, Style: SoftwareRenderBackgroundStyle> Widget for SoftwareRenderBackground<'sdl, Style> {
-    fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
-        let position = match crate::util::length::frect_to_rect(event.position) {
-            Some(v) => v,
-            None => return Ok(()), // nothing if zero area
-        };
+    fn draw(&mut self, mut event: WidgetEvent) -> Result<(), String> {
+        let pos: Option<sdl2::rect::Rect> = event.position.into();
 
-        let scale_factor = self.style.scale_factor();
+        if let Some(position) = pos {
+            let scale_factor = self.style.scale_factor();
 
-        let (texture, surface) = match self.cache.take() {
-            Some(cache) => {
-                if cache.surface.width() >= position.width() / scale_factor
-                    && cache.surface.height() >= position.height() / scale_factor
-                {
-                    // large enough to use cache
-                    (cache.texture, cache.surface)
-                } else {
-                    let old_width = cache.surface.width();
-                    let old_height = cache.surface.height();
-                    let new_width = (position.width() / scale_factor).max(old_width);
-                    let new_height = (position.height() / scale_factor).max(old_height);
-                    // must expand texture in the cache
+            let (texture, surface) = match self.cache.take() {
+                Some(cache) => {
+                    if cache.surface.width() >= position.width() / scale_factor
+                        && cache.surface.height() >= position.height() / scale_factor
+                    {
+                        // large enough to use cache
+                        (cache.texture, cache.surface)
+                    } else {
+                        let old_width = cache.surface.width();
+                        let old_height = cache.surface.height();
+                        let new_width = (position.width() / scale_factor).max(old_width);
+                        let new_height = (position.height() / scale_factor).max(old_height);
+                        // must expand texture in the cache
+                        let mut surface = Surface::new(
+                            new_width,
+                            new_height,
+                            sdl2::pixels::PixelFormatEnum::ARGB8888,
+                        )?;
+
+                        // reuse what was already computed
+                        cache.surface.blit(None, &mut surface, None)?;
+
+                        let row_stride = new_width as usize * 4;
+                        surface.with_lock_mut(|buffer| {
+                            // draw the expanded height
+                            if new_height > cache.surface.height() {
+                                #[cfg(feature = "rayon")]
+                                let row_iter = buffer.par_chunks_exact_mut(row_stride);
+                                #[cfg(not(feature = "rayon"))]
+                                let row_iter = buffer.chunks_exact_mut(row_stride);
+
+                                let row_iter = row_iter.skip(old_height as usize);
+                                row_iter.enumerate().for_each(|(row_index, row)| {
+                                    let row_index = row_index + old_height as usize;
+                                    let pixel_iter = row.chunks_exact_mut(4);
+
+                                    pixel_iter.enumerate().for_each(|(pixel_index, pixel)| {
+                                        let x = pixel_index;
+                                        let y = row_index;
+                                        let color = self.style.get(
+                                            x * scale_factor as usize,
+                                            y * scale_factor as usize,
+                                        );
+                                        pixel[0] = color.b;
+                                        pixel[1] = color.g;
+                                        pixel[2] = color.r;
+                                        pixel[3] = color.a;
+                                    });
+                                });
+                            }
+
+                            // draw the expanded width + corner
+                            if new_width > cache.surface.width() {
+                                #[cfg(feature = "rayon")]
+                                let row_iter = buffer.par_chunks_exact_mut(row_stride);
+                                #[cfg(not(feature = "rayon"))]
+                                let row_iter = buffer.chunks_exact_mut(row_stride);
+
+                                row_iter.enumerate().for_each(|(row_index, row)| {
+                                    let pixel_iter = row.chunks_exact_mut(4);
+
+                                    let pixel_iter = pixel_iter.skip(old_width as usize);
+                                    pixel_iter.enumerate().for_each(|(pixel_index, pixel)| {
+                                        let x = (pixel_index + old_width as usize) as usize;
+                                        let y = row_index;
+                                        let color = self.style.get(
+                                            x * scale_factor as usize,
+                                            y * scale_factor as usize,
+                                        );
+                                        pixel[0] = color.b;
+                                        pixel[1] = color.g;
+                                        pixel[2] = color.r;
+                                        pixel[3] = color.a;
+                                    });
+                                });
+                            }
+                        });
+
+                        let mut surface_copy = Surface::new(
+                            new_width,
+                            new_height,
+                            sdl2::pixels::PixelFormatEnum::ARGB8888,
+                        )?;
+
+                        surface.blit(None, &mut surface_copy, None)?;
+
+                        let mut texture = self
+                            .creator
+                            .create_texture_from_surface(surface)
+                            .map_err(|e| e.to_string())?;
+                        texture.set_color_mod(self.color_mod.0, self.color_mod.1, self.color_mod.2);
+                        texture.set_scale_mode(sdl2::render::ScaleMode::Linear);
+                        (texture, surface_copy)
+                    }
+                }
+                None => {
+                    // create texture from scratch
                     let mut surface = Surface::new(
-                        new_width,
-                        new_height,
+                        position.width() / scale_factor,
+                        position.height() / scale_factor,
                         sdl2::pixels::PixelFormatEnum::ARGB8888,
                     )?;
 
-                    // reuse what was already computed
-                    cache.surface.blit(None, &mut surface, None)?;
-
-                    let row_stride = new_width as usize * 4;
                     surface.with_lock_mut(|buffer| {
-                        // draw the expanded height
-                        if new_height > cache.surface.height() {
-                            #[cfg(feature = "rayon")]
-                            let row_iter = buffer.par_chunks_exact_mut(row_stride);
-                            #[cfg(not(feature = "rayon"))]
-                            let row_iter = buffer.chunks_exact_mut(row_stride);
+                        let width = (position.width() / scale_factor) as usize;
+                        let row_stride = width as usize * 4;
 
-                            let row_iter = row_iter.skip(old_height as usize);
-                            row_iter.enumerate().for_each(|(row_index, row)| {
-                                let row_index = row_index + old_height as usize;
-                                let pixel_iter = row.chunks_exact_mut(4);
+                        // let start = Instant::now();
 
-                                pixel_iter.enumerate().for_each(|(pixel_index, pixel)| {
-                                    let x = pixel_index;
-                                    let y = row_index;
-                                    let color = self
-                                        .style
-                                        .get(x * scale_factor as usize, y * scale_factor as usize);
-                                    pixel[0] = color.b;
-                                    pixel[1] = color.g;
-                                    pixel[2] = color.r;
-                                    pixel[3] = color.a;
-                                });
+                        #[cfg(feature = "rayon")]
+                        let row_iter = buffer.par_chunks_exact_mut(row_stride);
+                        #[cfg(not(feature = "rayon"))]
+                        let row_iter = buffer.chunks_exact_mut(row_stride);
+
+                        row_iter.enumerate().for_each(|(row_index, row)| {
+                            let pixel_iter = row.chunks_exact_mut(4);
+                            pixel_iter.enumerate().for_each(|(pixel_index, pixel)| {
+                                let x = pixel_index;
+                                let y = row_index;
+                                let color = self
+                                    .style
+                                    .get(x * scale_factor as usize, y * scale_factor as usize);
+                                pixel[0] = color.b;
+                                pixel[1] = color.g;
+                                pixel[2] = color.r;
+                                pixel[3] = color.a;
                             });
-                        }
+                        });
 
-                        // draw the expanded width + corner
-                        if new_width > cache.surface.width() {
-                            #[cfg(feature = "rayon")]
-                            let row_iter = buffer.par_chunks_exact_mut(row_stride);
-                            #[cfg(not(feature = "rayon"))]
-                            let row_iter = buffer.chunks_exact_mut(row_stride);
-
-                            row_iter.enumerate().for_each(|(row_index, row)| {
-                                let pixel_iter = row.chunks_exact_mut(4);
-
-                                let pixel_iter = pixel_iter.skip(old_width as usize);
-                                pixel_iter.enumerate().for_each(|(pixel_index, pixel)| {
-                                    let x = (pixel_index + old_width as usize) as usize;
-                                    let y = row_index;
-                                    let color = self
-                                        .style
-                                        .get(x * scale_factor as usize, y * scale_factor as usize);
-                                    pixel[0] = color.b;
-                                    pixel[1] = color.g;
-                                    pixel[2] = color.r;
-                                    pixel[3] = color.a;
-                                });
-                            });
-                        }
+                        // println!("{}", start.elapsed().as_millis());
                     });
 
                     let mut surface_copy = Surface::new(
-                        new_width,
-                        new_height,
+                        position.width() / scale_factor,
+                        position.height() / scale_factor,
                         sdl2::pixels::PixelFormatEnum::ARGB8888,
                     )?;
 
@@ -295,74 +475,143 @@ impl<'sdl, Style: SoftwareRenderBackgroundStyle> Widget for SoftwareRenderBackgr
                     texture.set_scale_mode(sdl2::render::ScaleMode::Linear);
                     (texture, surface_copy)
                 }
-            }
-            None => {
-                // create texture from scratch
-                let mut surface = Surface::new(
+            };
+
+            event.canvas.copy(
+                &texture,
+                Rect::new(
+                    0,
+                    0,
                     position.width() / scale_factor,
                     position.height() / scale_factor,
-                    sdl2::pixels::PixelFormatEnum::ARGB8888,
-                )?;
+                ),
+                position,
+            )?;
 
-                surface.with_lock_mut(|buffer| {
-                    let width = (position.width() / scale_factor) as usize;
-                    let row_stride = width as usize * 4;
+            self.cache = Some(SoftwareRenderBackgroundCache { texture, surface });
+        }
 
-                    // let start = Instant::now();
-
-                    #[cfg(feature = "rayon")]
-                    let row_iter = buffer.par_chunks_exact_mut(row_stride);
-                    #[cfg(not(feature = "rayon"))]
-                    let row_iter = buffer.chunks_exact_mut(row_stride);
-
-                    row_iter.enumerate().for_each(|(row_index, row)| {
-                        let pixel_iter = row.chunks_exact_mut(4);
-                        pixel_iter.enumerate().for_each(|(pixel_index, pixel)| {
-                            let x = pixel_index;
-                            let y = row_index;
-                            let color = self
-                                .style
-                                .get(x * scale_factor as usize, y * scale_factor as usize);
-                            pixel[0] = color.b;
-                            pixel[1] = color.g;
-                            pixel[2] = color.r;
-                            pixel[3] = color.a;
-                        });
-                    });
-
-                    // println!("{}", start.elapsed().as_millis());
-                });
-
-                let mut surface_copy = Surface::new(
-                    position.width() / scale_factor,
-                    position.height() / scale_factor,
-                    sdl2::pixels::PixelFormatEnum::ARGB8888,
-                )?;
-
-                surface.blit(None, &mut surface_copy, None)?;
-
-                let mut texture = self
-                    .creator
-                    .create_texture_from_surface(surface)
-                    .map_err(|e| e.to_string())?;
-                texture.set_color_mod(self.color_mod.0, self.color_mod.1, self.color_mod.2);
-                texture.set_scale_mode(sdl2::render::ScaleMode::Linear);
-                (texture, surface_copy)
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => {
+                // scroller exactly passes sizing information to parent in this
+                // case, no need to place again
+                self.contained.draw(event)
             }
-        };
+            BackgroundSizingPolicy::Custom(_) => {
+                // whatever the sizing of the parent, properly place the
+                // contained within it
+                let position_for_contained =
+                    place(self.contained, event.position, event.aspect_ratio_priority)?;
+                self.contained.draw(event.sub_event(position_for_contained))
+            }
+        }
+    }
 
-        event.canvas.copy(
-            &texture,
-            Rect::new(
-                0,
-                0,
-                position.width() / scale_factor,
-                position.height() / scale_factor,
-            ),
-            position,
-        )?;
+    fn update(&mut self, mut event: WidgetEvent) -> Result<(), String> {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => {
+                // scroller exactly passes sizing information to parent in this
+                // case, no need to place again
+                self.contained.update(event)
+            }
+            BackgroundSizingPolicy::Custom(_) => {
+                // whatever the sizing of the parent, properly place the
+                // contained within it
+                let position_for_contained =
+                    place(self.contained, event.position, event.aspect_ratio_priority)?;
+                self.contained
+                    .update(event.sub_event(position_for_contained))
+            }
+        }
+    }
 
-        self.cache = Some(SoftwareRenderBackgroundCache { texture, surface });
-        Ok(())
+    fn min(&mut self) -> Result<(MinLen, MinLen), String> {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.min(),
+            BackgroundSizingPolicy::Custom(custom) => Ok((custom.min_w, custom.min_h)),
+        }
+    }
+
+    fn min_w_fail_policy(&self) -> MinLenFailPolicy {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.min_w_fail_policy(),
+            BackgroundSizingPolicy::Custom(custom) => custom.min_w_fail_policy,
+        }
+    }
+
+    fn min_h_fail_policy(&self) -> MinLenFailPolicy {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.min_h_fail_policy(),
+            BackgroundSizingPolicy::Custom(custom) => custom.min_h_fail_policy,
+        }
+    }
+
+    fn max(&mut self) -> Result<(MaxLen, MaxLen), String> {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.max(),
+            BackgroundSizingPolicy::Custom(custom) => Ok((custom.max_w, custom.max_h)),
+        }
+    }
+
+    fn max_w_fail_policy(&self) -> MaxLenFailPolicy {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.max_w_fail_policy(),
+            BackgroundSizingPolicy::Custom(custom) => custom.max_w_fail_policy,
+        }
+    }
+
+    fn max_h_fail_policy(&self) -> MaxLenFailPolicy {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.max_h_fail_policy(),
+            BackgroundSizingPolicy::Custom(custom) => custom.max_h_fail_policy,
+        }
+    }
+
+    fn preferred_portion(&self) -> (PreferredPortion, PreferredPortion) {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.preferred_portion(),
+            BackgroundSizingPolicy::Custom(custom) => (custom.preferred_w, custom.preferred_h),
+        }
+    }
+
+    fn preferred_width_from_height(&mut self, pref_h: f32) -> Option<Result<f32, String>> {
+        match &mut self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.preferred_width_from_height(pref_h),
+            BackgroundSizingPolicy::Custom(custom) => {
+                let ratio = match &custom.aspect_ratio {
+                    None => return None,
+                    Some(v) => v,
+                };
+
+                Some(Ok(AspectRatioPreferredDirection::width_from_height(
+                    *ratio, pref_h,
+                )))
+            }
+        }
+    }
+
+    fn preferred_height_from_width(&mut self, pref_w: f32) -> Option<Result<f32, String>> {
+        match &mut self.sizing_policy {
+            BackgroundSizingPolicy::Children => self.contained.preferred_height_from_width(pref_w),
+            BackgroundSizingPolicy::Custom(custom) => {
+                let ratio = match &custom.aspect_ratio {
+                    None => return None,
+                    Some(v) => v,
+                };
+
+                Some(Ok(AspectRatioPreferredDirection::height_from_width(
+                    *ratio, pref_w,
+                )))
+            }
+        }
+    }
+
+    fn preferred_link_allowed_exceed_portion(&self) -> bool {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => {
+                self.contained.preferred_link_allowed_exceed_portion()
+            }
+            BackgroundSizingPolicy::Custom(custom) => custom.preferred_link_allowed_exceed_portion,
+        }
     }
 }
