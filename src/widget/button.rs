@@ -135,7 +135,7 @@ impl<'sdl, 'state> TextureVariantStyle<ButtonTextureVariant> for DefaultButtonSt
 }
 
 pub struct Button<'sdl> {
-    functionality: Box<dyn FnMut() -> Result<(), String> + 'sdl>,
+    pub functionality: Box<dyn FnMut() -> Result<(), String> + 'sdl>,
     pub focus_id: FocusID,
     pressed: bool, // internal state for drawing
 

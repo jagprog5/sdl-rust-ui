@@ -3,7 +3,7 @@ use std::cell::Cell;
 use sdl2::{mouse::MouseButton, rect::Rect, render::ClippingRect};
 
 use crate::{
-    util::length::AspectRatioPreferredDirection,
+    util::{length::AspectRatioPreferredDirection, rect::FRect},
     widget::{
         debug::CustomSizingControl,
         widget::{place, ConsumedStatus, Widget, WidgetEvent},
@@ -101,6 +101,59 @@ fn clipping_rect_intersection(
         None => {
             // position is zero area so intersection result is zero
             ClippingRect::Zero
+        }
+    }
+}
+
+fn apply_scroll_restrictions(
+    mut position_for_contained: crate::util::rect::FRect,
+    event_position: crate::util::rect::FRect,
+    scroll_y_enabled: bool,
+    scroll_x_enabled: bool,
+    scroll_y: &mut i32,
+    scroll_x: &mut i32,
+) {
+    position_for_contained.x += *scroll_x as f32;
+    position_for_contained.y += *scroll_y as f32;
+    let violating_top = position_for_contained.y < event_position.y;
+    let violating_left = position_for_contained.x < event_position.x;
+    let violating_bottom =
+        position_for_contained.y + position_for_contained.h > event_position.y + event_position.h;
+    let violating_right =
+        position_for_contained.x + position_for_contained.w > event_position.x + event_position.w;
+
+    let almost_violating_top =
+        position_for_contained.y + position_for_contained.h < event_position.y;
+    let almost_violating_left =
+        position_for_contained.x + position_for_contained.w < event_position.x;
+    let almost_violating_bottom = position_for_contained.y + position_for_contained.h
+        - position_for_contained.h
+        > event_position.y + event_position.h;
+    let almost_violating_right = position_for_contained.x + position_for_contained.w
+        - position_for_contained.w
+        > event_position.x + event_position.w;
+
+    if scroll_y_enabled {
+        if violating_top && !almost_violating_bottom {
+            *scroll_y += (event_position.y - position_for_contained.y).ceil() as i32;
+        }
+
+        if violating_bottom && !almost_violating_top {
+            *scroll_y -= ((position_for_contained.y + position_for_contained.h)
+                - (event_position.y + event_position.h))
+                .ceil() as i32;
+        }
+    }
+
+    if scroll_x_enabled {
+        if violating_left && !almost_violating_right {
+            *scroll_x += (event_position.x - position_for_contained.x).ceil() as i32;
+        }
+
+        if violating_right && !almost_violating_left {
+            *scroll_x -= ((position_for_contained.x + position_for_contained.w)
+                - (event_position.x + event_position.w))
+                .ceil() as i32;
         }
     }
 }
@@ -241,54 +294,56 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
         }
 
         // translate events before sending to contained. then translate back again when done
-        let scroll_x = self.scroll_x.get();
-        let scroll_y = self.scroll_y.get();
+        let mut scroll_x = self.scroll_x.get();
+        let mut scroll_y = self.scroll_y.get();
 
         let previous_clipping_rect = event.canvas.clip_rect();
         let clipping_rect =
             clipping_rect_intersection(previous_clipping_rect, event.position.into());
         event.canvas.set_clip_rect(clipping_rect);
-        event.position.x += scroll_x as f32;
-        event.position.y += scroll_y as f32;
 
-        let update_result = match &self.sizing_policy {
+        let position_for_contained = match &self.sizing_policy {
             ScrollerSizingPolicy::Children => {
                 // scroller exactly passes sizing information to parent in this
                 // case, no need to place again
-                self.contained.update(event.dup())
+                event.position
             }
             ScrollerSizingPolicy::Custom(_) => {
-                // whatever the sizing of the parent, properly place the
-                // contained within it
-                let position_for_contained =
-                    place(self.contained, event.position, event.aspect_ratio_priority)?;
-                self.contained
-                    .update(event.sub_event(position_for_contained))
+                place(self.contained, event.position, event.aspect_ratio_priority)?
             }
         };
+
+        if self.restrict_scroll {
+            // restrict here to catch all from previous frame. e.g. if the
+            // window is resized to be smaller so it's no longer within bounds
+            apply_scroll_restrictions(
+                position_for_contained,
+                event.position,
+                self.scroll_y_enabled,
+                self.scroll_x_enabled,
+                &mut scroll_y,
+                &mut scroll_x,
+            );
+        }
+
+        // shift all positions based on the scroll, and update the container
+        let position_for_contained_shifted = FRect {
+            x: position_for_contained.x + scroll_x as f32,
+            y: position_for_contained.y + scroll_y as f32,
+            w: position_for_contained.w,
+            h: position_for_contained.h,
+        };
+
+        event.position.x += scroll_x as f32;
+        event.position.y += scroll_y as f32;
+
+        let update_result = self
+            .contained
+            .update(event.sub_event(position_for_contained_shifted));
+
         event.canvas.set_clip_rect(previous_clipping_rect); // restore
         event.position.x -= scroll_x as f32;
         event.position.y -= scroll_y as f32;
-
-        // min_x, min_y, max_x, max_y
-        // let mut scroll_restrictions: Option<(i32, i32, i32, i32)> = None;
-
-        // if self.restrict_scroll {
-        //     if let Some(position) = event.position {
-        //         let pos = place(self.contained, position, event.aspect_ratio_priority)?;
-        //         // println!("{:?}", self.contains);
-        //         println!("{:?}", self.contained.min());
-        //         println!("{:?}", self.contained.max());
-        //         println!("============= {:?}", pos);
-        //         if let Some(pos) = pos {
-        //             let min_x = pos.x.round() as i32;
-        //             let min_y = pos.y.round() as i32;
-        //             let max_x = (pos.x + pos.width()).round() as i32;
-        //             let max_y = (pos.y + pos.height()).round() as i32;
-        //             scroll_restrictions = Some((min_x, min_y, max_x, max_y));
-        //         }
-        //     }
-        // }
 
         // handle mouse wheel. happens after update, as it allows contained
         // to consume it first (for example, with nested scrolls)
@@ -332,22 +387,17 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                             return;
                         }
                         e.set_consumed_by_layout();
-                        if self.scroll_x_enabled {
-                            self.scroll_x.set(
-                                self.scroll_x.get() - multiplier * x * self.mouse_wheel_sensitivity,
+                        scroll_x -= multiplier * x * self.mouse_wheel_sensitivity;
+                        scroll_y -= multiplier * y * self.mouse_wheel_sensitivity;
+                        if self.restrict_scroll {
+                            apply_scroll_restrictions(
+                                position_for_contained,
+                                event.position,
+                                self.scroll_y_enabled,
+                                self.scroll_x_enabled,
+                                &mut scroll_y,
+                                &mut scroll_x,
                             );
-                        }
-                        if self.scroll_y_enabled {
-                            let desired_next_scroll_y =
-                                self.scroll_y.get() - multiplier * y * self.mouse_wheel_sensitivity;
-                            // println!("{}", desired_next_scroll_y);
-                            // if let Some(scroll_restrictions) = scroll_restrictions {
-                            //     println!("{:?}", scroll_restrictions);
-                            //     //     if desired_next_scroll_y < scroll_restrictions.1 {
-                            //     //         desired_next_scroll_y = scroll_restrictions.1;
-                            //     //     }
-                            // }
-                            self.scroll_y.set(desired_next_scroll_y);
                         }
                     }
                 }
@@ -359,6 +409,16 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                     _ => {
                         self.drag_state = DragState::None;
                         e.set_consumed_by_layout();
+                        if self.restrict_scroll {
+                            apply_scroll_restrictions(
+                                position_for_contained,
+                                event.position,
+                                self.scroll_y_enabled,
+                                self.scroll_x_enabled,
+                                &mut scroll_y,
+                                &mut scroll_x,
+                            );
+                        }
                     }
                 },
                 // on mouse down, log the position and wait for drag start
@@ -369,10 +429,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                     ..
                 } => {
                     let pos: Option<sdl2::rect::Rect> = event.position.into();
-                    if pos
-                        .map(|pos| pos.contains_point((x, y)))
-                        .unwrap_or(false)
-                    {
+                    if pos.map(|pos| pos.contains_point((x, y))).unwrap_or(false) {
                         let point_contained_in_clipping_rect = match clipping_rect {
                             sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
                             sdl2::render::ClippingRect::Zero => false,
@@ -404,23 +461,27 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                         let trigger_x = dragged_far_enough_x && self.scroll_x_enabled;
                         let trigger_y = dragged_far_enough_y && self.scroll_y_enabled;
                         if trigger_x || trigger_y {
-                            self.drag_state = DragState::Dragging((
-                                x - self.scroll_x.get(),
-                                y - self.scroll_y.get(),
-                            ));
+                            self.drag_state = DragState::Dragging((x - scroll_x, y - scroll_y));
                             // intentional fallthrough
                         }
                     }
 
                     if let DragState::Dragging((drag_x, drag_y)) = self.drag_state {
                         e.set_consumed_by_layout();
-                        self.scroll_x.set(x - drag_x);
-                        self.scroll_y.set(y - drag_y);
+                        scroll_x = x - drag_x;
+                        scroll_y = y - drag_y;
                     }
                 }
                 _ => {}
             });
 
+        // sync changes
+        if self.scroll_x_enabled {
+            self.scroll_x.set(scroll_x);
+        }
+        if self.scroll_y_enabled {
+            self.scroll_y.set(scroll_y);
+        }
         update_result
     }
 

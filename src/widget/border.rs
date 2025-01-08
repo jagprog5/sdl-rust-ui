@@ -259,7 +259,9 @@ impl<'sdl> Widget for Border<'sdl> {
     }
 
     fn min(&mut self) -> Result<(MinLen, MinLen), String> {
-        self.contained.min()
+        let baseline = MinLen((self.style.width() * 2) as f32);
+        let m = self.contained.min()?;
+        Ok((m.0.combined(baseline), m.1.combined(baseline)))
     }
 
     fn max(&mut self) -> Result<(MaxLen, MaxLen), String> {

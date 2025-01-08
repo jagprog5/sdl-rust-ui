@@ -140,7 +140,7 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
                 Some(Rect::new(
                     position.x,
                     position.y + excess,
-                    position.width(),
+                    query.width,
                     query.height,
                 )),
             )?;
@@ -154,7 +154,7 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
                     event.canvas.copy(
                         txt,
                         Some(Rect::new(0, excess, query.width, position.height())),
-                        Some(position),
+                        Some(Rect::new(position.x, position.y, query.width, position.height())),
                     )?
                 }
                 MultiLineMinHeightFailPolicy::AllowRunOff(v) => {
@@ -166,7 +166,7 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
                         Some(Rect::new(
                             position.x,
                             position.y + excess,
-                            position.width(),
+                            query.width,
                             query.height,
                         )),
                     )?;
