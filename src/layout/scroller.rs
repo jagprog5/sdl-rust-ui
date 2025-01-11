@@ -19,12 +19,25 @@ enum DragState {
     Dragging((i32, i32)),
 }
 
+pub enum ScrollAspectRatioDirectionPolicy {
+    Inherit,
+    Literal(AspectRatioPreferredDirection),
+}
+
+impl Default for ScrollAspectRatioDirectionPolicy {
+    fn default() -> Self {
+        ScrollAspectRatioDirectionPolicy::Inherit
+    }
+}
+
 pub enum ScrollerSizingPolicy {
     /// inherit sizing from the contained widget
     Children,
     /// states literally, ignoring the contained widget. the contained widget
     /// will then be placed within the scroll widget's bounds
-    Custom(CustomSizingControl),
+    /// 
+    /// give an aspect ratio direction to be given to the contained widget
+    Custom(CustomSizingControl, ScrollAspectRatioDirectionPolicy),
 }
 
 /// translates its content - facilitates scrolling
@@ -53,7 +66,7 @@ pub struct Scroller<'sdl, 'state> {
     pub scroll_y: &'state Cell<i32>,
     pub contained: &'sdl mut dyn Widget,
     pub sizing_policy: ScrollerSizingPolicy,
-    /// true restricts the scrolling to keep the contained in frame. TODO!
+    /// true restricts the scrolling to keep the contained in frame
     pub restrict_scroll: bool,
 }
 
@@ -115,45 +128,60 @@ fn apply_scroll_restrictions(
 ) {
     position_for_contained.x += *scroll_x as f32;
     position_for_contained.y += *scroll_y as f32;
-    let violating_top = position_for_contained.y < event_position.y;
-    let violating_left = position_for_contained.x < event_position.x;
-    let violating_bottom =
-        position_for_contained.y + position_for_contained.h > event_position.y + event_position.h;
-    let violating_right =
-        position_for_contained.x + position_for_contained.w > event_position.x + event_position.w;
-
-    let almost_violating_top =
-        position_for_contained.y + position_for_contained.h < event_position.y;
-    let almost_violating_left =
-        position_for_contained.x + position_for_contained.w < event_position.x;
-    let almost_violating_bottom = position_for_contained.y + position_for_contained.h
-        - position_for_contained.h
-        > event_position.y + event_position.h;
-    let almost_violating_right = position_for_contained.x + position_for_contained.w
-        - position_for_contained.w
-        > event_position.x + event_position.w;
 
     if scroll_y_enabled {
-        if violating_top && !almost_violating_bottom {
-            *scroll_y += (event_position.y - position_for_contained.y).ceil() as i32;
-        }
+        if position_for_contained.h < event_position.h {
+            // the contained thing is smaller than the parent
+            let violating_top = position_for_contained.y < event_position.y;
+            let violating_bottom = position_for_contained.y + position_for_contained.h
+                > event_position.y + event_position.h;
 
-        if violating_bottom && !almost_violating_top {
-            *scroll_y -= ((position_for_contained.y + position_for_contained.h)
-                - (event_position.y + event_position.h))
-                .ceil() as i32;
+            if violating_top {
+                *scroll_y += (event_position.y - position_for_contained.y) as i32;
+            } else if violating_bottom {
+                *scroll_y -= ((position_for_contained.y + position_for_contained.h)
+                    - (event_position.y + event_position.h)) as i32;
+            }
+        } else {
+            let down_from_top = position_for_contained.y > event_position.y;
+
+            let up_from_bottom = position_for_contained.y + position_for_contained.h
+                < event_position.y + event_position.h;
+
+            if down_from_top {
+                *scroll_y += (event_position.y - position_for_contained.y) as i32;
+            } else if up_from_bottom {
+                *scroll_y -= ((position_for_contained.y + position_for_contained.h)
+                    - (event_position.y + event_position.h)) as i32;
+            }
         }
     }
 
     if scroll_x_enabled {
-        if violating_left && !almost_violating_right {
-            *scroll_x += (event_position.x - position_for_contained.x).ceil() as i32;
-        }
+        if position_for_contained.w < event_position.w {
+            // the contained thing is smaller than the parent
+            let violating_left = position_for_contained.x < event_position.x;
+            let violating_right = position_for_contained.x + position_for_contained.w
+                > event_position.x + event_position.w;
 
-        if violating_right && !almost_violating_left {
-            *scroll_x -= ((position_for_contained.x + position_for_contained.w)
-                - (event_position.x + event_position.w))
-                .ceil() as i32;
+            if violating_left {
+                *scroll_x += (event_position.x - position_for_contained.x) as i32;
+            } else if violating_right {
+                *scroll_x -= ((position_for_contained.x + position_for_contained.w)
+                    - (event_position.x + event_position.w)) as i32;
+            }
+        } else {
+            let left_from_right = position_for_contained.x > event_position.x;
+
+            let right_from_left = position_for_contained.x + position_for_contained.w
+                < event_position.x + event_position.w;
+
+            if left_from_right {
+                *scroll_x += (event_position.x - position_for_contained.x) as i32;
+            } else if right_from_left {
+                *scroll_x -= ((position_for_contained.x + position_for_contained.w)
+                    - (event_position.x + event_position.w)) as i32;
+            }
         }
     }
 }
@@ -164,7 +192,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
     ) -> Result<(crate::util::length::MinLen, crate::util::length::MinLen), String> {
         match &self.sizing_policy {
             ScrollerSizingPolicy::Children => self.contained.min(),
-            ScrollerSizingPolicy::Custom(scroller_literal_sizing) => {
+            ScrollerSizingPolicy::Custom(scroller_literal_sizing, _) => {
                 Ok((scroller_literal_sizing.min_w, scroller_literal_sizing.min_h))
             }
         }
@@ -173,7 +201,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
     fn min_w_fail_policy(&self) -> crate::util::length::MinLenFailPolicy {
         match &self.sizing_policy {
             ScrollerSizingPolicy::Children => self.contained.min_w_fail_policy(),
-            ScrollerSizingPolicy::Custom(scroller_literal_sizing) => {
+            ScrollerSizingPolicy::Custom(scroller_literal_sizing, _) => {
                 scroller_literal_sizing.min_w_fail_policy
             }
         }
@@ -182,7 +210,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
     fn min_h_fail_policy(&self) -> crate::util::length::MinLenFailPolicy {
         match &self.sizing_policy {
             ScrollerSizingPolicy::Children => self.contained.min_h_fail_policy(),
-            ScrollerSizingPolicy::Custom(scroller_literal_sizing) => {
+            ScrollerSizingPolicy::Custom(scroller_literal_sizing, _) => {
                 scroller_literal_sizing.min_h_fail_policy
             }
         }
@@ -193,7 +221,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
     ) -> Result<(crate::util::length::MaxLen, crate::util::length::MaxLen), String> {
         match &self.sizing_policy {
             ScrollerSizingPolicy::Children => self.contained.max(),
-            ScrollerSizingPolicy::Custom(scroller_literal_sizing) => {
+            ScrollerSizingPolicy::Custom(scroller_literal_sizing, _) => {
                 Ok((scroller_literal_sizing.max_w, scroller_literal_sizing.max_h))
             }
         }
@@ -202,7 +230,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
     fn max_w_fail_policy(&self) -> crate::util::length::MaxLenFailPolicy {
         match &self.sizing_policy {
             ScrollerSizingPolicy::Children => self.contained.max_w_fail_policy(),
-            ScrollerSizingPolicy::Custom(scroller_literal_sizing) => {
+            ScrollerSizingPolicy::Custom(scroller_literal_sizing, _) => {
                 scroller_literal_sizing.max_w_fail_policy
             }
         }
@@ -211,7 +239,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
     fn max_h_fail_policy(&self) -> crate::util::length::MaxLenFailPolicy {
         match &self.sizing_policy {
             ScrollerSizingPolicy::Children => self.contained.max_h_fail_policy(),
-            ScrollerSizingPolicy::Custom(scroller_literal_sizing) => {
+            ScrollerSizingPolicy::Custom(scroller_literal_sizing, _) => {
                 scroller_literal_sizing.max_h_fail_policy
             }
         }
@@ -225,7 +253,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
     ) {
         match &self.sizing_policy {
             ScrollerSizingPolicy::Children => self.contained.preferred_portion(),
-            ScrollerSizingPolicy::Custom(scroller_literal_sizing) => (
+            ScrollerSizingPolicy::Custom(scroller_literal_sizing, _) => (
                 scroller_literal_sizing.preferred_w,
                 scroller_literal_sizing.preferred_h,
             ),
@@ -235,7 +263,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
     fn preferred_width_from_height(&mut self, pref_h: f32) -> Option<Result<f32, String>> {
         match &mut self.sizing_policy {
             ScrollerSizingPolicy::Children => self.contained.preferred_width_from_height(pref_h),
-            ScrollerSizingPolicy::Custom(scroller_literal_sizing) => {
+            ScrollerSizingPolicy::Custom(scroller_literal_sizing, _) => {
                 let ratio = match &scroller_literal_sizing.aspect_ratio {
                     None => return None,
                     Some(v) => v,
@@ -251,7 +279,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
     fn preferred_height_from_width(&mut self, pref_w: f32) -> Option<Result<f32, String>> {
         match &mut self.sizing_policy {
             ScrollerSizingPolicy::Children => self.contained.preferred_height_from_width(pref_w),
-            ScrollerSizingPolicy::Custom(scroller_literal_sizing) => {
+            ScrollerSizingPolicy::Custom(scroller_literal_sizing, _) => {
                 let ratio = match &scroller_literal_sizing.aspect_ratio {
                     None => return None,
                     Some(v) => v,
@@ -269,7 +297,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
             ScrollerSizingPolicy::Children => {
                 self.contained.preferred_link_allowed_exceed_portion()
             }
-            ScrollerSizingPolicy::Custom(scroller_literal_sizing) => {
+            ScrollerSizingPolicy::Custom(scroller_literal_sizing, _) => {
                 scroller_literal_sizing.preferred_link_allowed_exceed_portion
             }
         }
@@ -308,8 +336,12 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                 // case, no need to place again
                 event.position
             }
-            ScrollerSizingPolicy::Custom(_) => {
-                place(self.contained, event.position, event.aspect_ratio_priority)?
+            ScrollerSizingPolicy::Custom(_, dir) => {
+                let dir = match dir {
+                    ScrollAspectRatioDirectionPolicy::Inherit => event.aspect_ratio_priority,
+                    ScrollAspectRatioDirectionPolicy::Literal(dir) => *dir,
+                };
+                place(self.contained, event.position, dir)?
             }
         };
 
@@ -497,20 +529,23 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
         event.position.x += scroll_x as f32;
         event.position.y += scroll_y as f32;
 
-        let draw_result = match &self.sizing_policy {
-            ScrollerSizingPolicy::Children => {
-                // scroller exactly passes sizing information to parent in this
-                // case, no need to place again
-                self.contained.draw(event.dup())
-            }
-            ScrollerSizingPolicy::Custom(_) => {
-                // whatever the sizing of the parent, properly place the
-                // contained within it
-                let position_for_contained =
-                    place(self.contained, event.position, event.aspect_ratio_priority)?;
-                self.contained.draw(event.sub_event(position_for_contained))
-            }
+        let position_for_contained = match &self.sizing_policy {
+            ScrollerSizingPolicy::Children => event.position,
+            ScrollerSizingPolicy::Custom(_, dir) => {
+                let dir = match dir {
+                    // scroller exactly passes sizing information to parent in this
+                    // case, no need to place again
+                    ScrollAspectRatioDirectionPolicy::Inherit => event.aspect_ratio_priority,
+                    // whatever the sizing of the parent, properly place the
+                    // contained within it
+                    ScrollAspectRatioDirectionPolicy::Literal(dir) => *dir,
+                };
+                place(self.contained, event.position, dir)?
+            },
         };
+
+        let draw_result = self.contained.draw(event.sub_event(position_for_contained));
+
         event.canvas.set_clip_rect(previous_clipping_rect); // restore
         event.position.x -= scroll_x as f32;
         event.position.y -= scroll_y as f32;

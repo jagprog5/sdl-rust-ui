@@ -33,7 +33,7 @@ impl<'sdl> Default for HorizontalLayout<'sdl> {
             min_h_fail_policy: Default::default(),
             max_h_fail_policy: Default::default(),
             min_w_policy: MinLenPolicy::Children,
-            min_h_policy: MinLenPolicy::Literal(MinLen::LAX),
+            min_h_policy: MinLenPolicy::Children,
             max_w_policy: MajorAxisMaxLenPolicy::Together(MaxLenPolicy::Children),
             max_h_policy: MaxLenPolicy::Literal(MaxLen::LAX),
         }
@@ -81,20 +81,21 @@ macro_rules! impl_widget_fn {
             for info in info.iter_mut() {
                 info.width = info.preferred_horizontal.weighted_portion(
                     sum_preferred_horizontal,
-                    self.elems.len(),
                     event.position.w,
                 );
-                if info.width < info.min_horizontal {
-                    // it is being made larger than it would prefer.
+                
+                let next_info_width = clamp(info.width, MinLen(info.min_horizontal), MaxLen(info.max_horizontal));
+
+                if info.width < next_info_width { // when clamped, it became larger
+                    // it wants to be larger than it currently is
                     // take some len from the other components
-                    amount_taken += info.min_horizontal - info.width;
-                    info.width = info.min_horizontal;
-                } else if info.width > info.max_horizontal {
-                    // it is being made smaller than it would prefer.
+                    amount_taken += next_info_width - info.width;
+                } else if info.width > next_info_width { // when clamped, it became smaller
+                    // it wants to be smaller than it currently is
                     // give some len to the other components
-                    amount_given += info.width - info.max_horizontal;
-                    info.width = info.max_horizontal;
+                    amount_given += info.width - next_info_width;
                 }
+                info.width = next_info_width;
             }
 
             if amount_given >= amount_taken {
@@ -145,7 +146,8 @@ macro_rules! impl_widget_fn {
                 // handle accumulation of errors. this is needed for things to look pixel perfect with many children
                 e_err_accumulation += info.width - info.width.floor();
                 info.width = info.width.floor();
-                if e_err_accumulation >= 1. {
+                // this is tied to crate::util::rect::rect_position_round
+                if e_err_accumulation >= 0.5 {
                     info.width += 1.;
                     e_err_accumulation -= 1.;
                 }
@@ -343,12 +345,18 @@ fn distribute_excess(info: &mut [ChildInfo], mut excess: f32) {
 
         let mut available_weight = 0f32;
         for info in info.iter() {
+            if info.max_horizontal < info.min_horizontal {
+                continue;
+            }
             if info.width < info.max_horizontal {
                 available_weight += info.preferred_horizontal.0;
             }
         }
 
         for info in info.iter_mut() {
+            if info.max_horizontal < info.min_horizontal {
+                continue;
+            }
             if info.width < info.max_horizontal {
                 let ideal_amount_to_give =
                     (info.preferred_horizontal.0 / available_weight) * excess;
@@ -379,12 +387,19 @@ fn take_deficit(info: &mut [ChildInfo], mut deficit: f32) {
 
         let mut available_weight = 0f32;
         for info in info.iter() {
+            if info.max_horizontal < info.min_horizontal {
+                // I don't think this case can happen, but just in case
+                continue;
+            }
             if info.width > info.min_horizontal {
                 available_weight += info.preferred_horizontal.0;
             }
         }
 
         for info in info.iter_mut() {
+            if info.max_horizontal < info.min_horizontal {
+                continue;
+            }
             if info.width > info.min_horizontal {
                 let ideal_amount_to_take =
                     (info.preferred_horizontal.0 / available_weight) * deficit;

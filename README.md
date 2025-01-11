@@ -37,6 +37,7 @@ Widgets
  - [border](./src/widget/border.rs), contains a widget in a border with a border style
  - [texture](./src/widget/texture.rs), generic texture display with sizing control
  - [single](./src/widget/single_line_label.rs) and [multiline](./src/widget/multi_line_label.rs) labels
+ - [single line text input](./src/widget/single_line_text_input.rs) (in progress)
  - [button](./src/widget/button.rs)
  - [checkbox](./src/widget/checkbox.rs)
 

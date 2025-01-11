@@ -42,7 +42,7 @@ impl<'sdl> Default for VerticalLayout<'sdl> {
             max_w_fail_policy: Default::default(),
             min_h_fail_policy: Default::default(),
             max_h_fail_policy: Default::default(),
-            min_w_policy: MinLenPolicy::Literal(MinLen::LAX),
+            min_w_policy: MinLenPolicy::Children,
             min_h_policy: MinLenPolicy::Children,
             max_w_policy: MaxLenPolicy::Literal(MaxLen::LAX),
             max_h_policy: MajorAxisMaxLenPolicy::Together(MaxLenPolicy::Children),
@@ -90,20 +90,21 @@ macro_rules! impl_widget_fn {
             for info in info.iter_mut() {
                 info.height = info.preferred_vertical.weighted_portion(
                     sum_preferred_vertical,
-                    self.elems.len(),
                     event.position.h,
                 );
-                if info.height < info.min_vertical {
-                    // it is being made larger than it would prefer.
+
+                let next_info_height = clamp(info.height, MinLen(info.min_vertical), MaxLen(info.max_vertical));
+
+                if info.height < next_info_height { // when clamped, it became larger
+                    // it wants to be larger than it currently is
                     // take some len from the other components
-                    amount_taken += info.min_vertical - info.height;
-                    info.height = info.min_vertical;
-                } else if info.height > info.max_vertical {
-                    // it is being made smaller than it would prefer.
+                    amount_taken += next_info_height - info.height;
+                } else if info.height > next_info_height { // when clamped, it became smaller
+                    // it wants to be smaller than it currently is
                     // give some len to the other components
-                    amount_given += info.height - info.max_vertical;
-                    info.height = info.max_vertical;
+                    amount_given += info.height - next_info_height;
                 }
+                info.height = next_info_height;
             }
 
             if amount_given >= amount_taken {
@@ -157,7 +158,8 @@ macro_rules! impl_widget_fn {
             for (elem, info) in self.elems.iter_mut().zip(info.iter_mut()) {
                 e_err_accumulation += info.height - info.height.floor();
                 info.height = info.height.floor();
-                if e_err_accumulation >= 1. {
+                // this is tied to crate::util::rect::rect_position_round
+                if e_err_accumulation >= 0.5 {
                     info.height += 1.;
                     e_err_accumulation -= 1.;
                 }
@@ -348,12 +350,18 @@ fn distribute_excess(info: &mut [ChildInfo], mut excess: f32) {
 
         let mut available_weight = 0f32;
         for info in info.iter() {
+            if info.max_vertical < info.min_vertical {
+                continue;
+            }
             if info.height < info.max_vertical {
                 available_weight += info.preferred_vertical.0;
             }
         }
 
         for info in info.iter_mut() {
+            if info.max_vertical < info.min_vertical {
+                continue;
+            }
             if info.height < info.max_vertical {
                 let ideal_amount_to_give = (info.preferred_vertical.0 / available_weight) * excess;
                 let max_amount_to_give = info.max_vertical - info.height;
@@ -383,12 +391,19 @@ fn take_deficit(info: &mut [ChildInfo], mut deficit: f32) {
 
         let mut available_weight = 0f32;
         for info in info.iter() {
+            if info.max_vertical < info.min_vertical {
+                // I don't think this case can happen, but just in case
+                continue;
+            }
             if info.height > info.min_vertical {
                 available_weight += info.preferred_vertical.0;
             }
         }
 
         for info in info.iter_mut() {
+            if info.max_vertical < info.min_vertical {
+                continue;
+            }
             if info.height > info.min_vertical {
                 let ideal_amount_to_take = (info.preferred_vertical.0 / available_weight) * deficit;
                 let max_amount_to_take = info.height - info.min_vertical;

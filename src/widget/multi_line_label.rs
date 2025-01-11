@@ -2,7 +2,7 @@ use sdl2::{pixels::Color, rect::Rect, render::TextureCreator, video::WindowConte
 
 use crate::util::{
     font::MultiLineFontStyle,
-    length::{MaxLenFailPolicy, MinLenFailPolicy, PreferredPortion},
+    length::{MaxLenFailPolicy, MinLenFailPolicy, PreferredPortion}, rect::rect_len_round,
 };
 
 use super::widget::{Widget, WidgetEvent};
@@ -15,6 +15,14 @@ pub trait MultiLineLabelState {
 impl MultiLineLabelState for String {
     fn get(&self) -> String {
         self.clone()
+    }
+}
+
+impl MultiLineLabelState for std::cell::Cell<String> {
+    fn get(&self) -> String {
+        let v = self.take();
+        self.set(v.clone());
+        v
     }
 }
 
@@ -34,8 +42,11 @@ pub enum MultiLineMinHeightFailPolicy {
     /// a value from 0 to 1 inclusively, indicating if the text should be cut
     /// off from the negative or positive direction, respectively
     CutOff(f32),
-    /// allow the text to be drawn downward past the parent's boundary
+    /// allow the text to be drawn past the parent's boundary in a direction.
+    /// indicate the direction
     AllowRunOff(MinLenFailPolicy),
+    /// request an appropriate height, deduced from the width and text
+    None(MinLenFailPolicy, MaxLenFailPolicy),
 }
 
 impl Default for MultiLineMinHeightFailPolicy {
@@ -91,6 +102,83 @@ impl<'sdl, 'state> MultiLineLabel<'sdl, 'state> {
 }
 
 impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
+    fn preferred_portion(&self) -> (PreferredPortion, PreferredPortion) {
+        (self.preferred_w, self.preferred_h)
+    }
+
+    fn preferred_link_allowed_exceed_portion(&self) -> bool {
+        match self.min_h_policy {
+            MultiLineMinHeightFailPolicy::None(_, _) => true,
+            _ => false,
+        }
+    }
+
+    fn min_h_fail_policy(&self) -> MinLenFailPolicy {
+        match self.min_h_policy {
+            MultiLineMinHeightFailPolicy::None(min_len_fail_policy, _) => min_len_fail_policy,
+            _ => Default::default(), // doesn't matter
+        }
+    }
+
+    fn max_h_fail_policy(&self) -> MaxLenFailPolicy {
+        match self.min_h_policy {
+            MultiLineMinHeightFailPolicy::None(_, max_len_fail_policy) => max_len_fail_policy,
+            _ => Default::default(), // doesn't matter
+        }
+    }
+
+    fn preferred_height_from_width(&mut self, pref_w: f32) -> Option<Result<f32, String>> {
+        match self.min_h_policy {
+            MultiLineMinHeightFailPolicy::None(_, _) => {
+                // match logic from draw, so that the same cache is used
+                let pref_w = match rect_len_round(pref_w) {
+                    Some(v) => v,
+                    None => return Some(Ok(0.)), // doesn't matter
+                };
+                // ok to use the same cache as draw, as once the pref_w is
+                // figured out, then that same one is used at draw as well
+                let cache = match self.cache.take().filter(|cache| {
+                    cache.text_rendered == self.text.get().as_str()
+                        && cache.color == self.color
+                        && cache.point_size == self.point_size
+                        && cache.wrap_width == pref_w
+                }) {
+                    Some(cache) => cache,
+                    None => {
+                        // if the text of the render properties have changed, then the
+                        // text needs to be re-rendered
+                        let text = self.text.get();
+                        let texture = match self.font_interface.render(
+                            text.as_str(),
+                            self.color,
+                            self.point_size,
+                            pref_w,
+                            &self.creator,
+                        ) {
+                            Ok(v) => v,
+                            Err(e) => return Some(Err(e)),
+                        };
+                        MultiLineLabelCache {
+                            text_rendered: text,
+                            point_size: self.point_size,
+                            wrap_width: pref_w,
+                            color: self.color,
+                            texture,
+                        }
+                    }
+                };
+        
+                let txt = &cache.texture;
+        
+                let query = txt.query();
+
+                self.cache = Some(cache);
+                Some(Ok(query.height as f32))
+            },
+            _ => None,
+        }
+    }
+
     fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
         let position: sdl2::rect::Rect = match event.position.into() {
             Some(v) => v,
@@ -171,6 +259,13 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
                         )),
                     )?;
                 }
+                MultiLineMinHeightFailPolicy::None(_, _) => {
+                    event.canvas.copy(
+                        txt,
+                        None,
+                        event.position,
+                    )?;
+                },
             }
         }
 

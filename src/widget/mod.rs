@@ -9,6 +9,8 @@ pub mod border;
 pub mod single_line_label;
 #[cfg(feature = "sdl2-ttf")]
 pub mod multi_line_label;
+#[cfg(feature = "sdl2-ttf")]
+pub mod single_line_text_input;
 
 pub mod background;
 pub mod checkbox;

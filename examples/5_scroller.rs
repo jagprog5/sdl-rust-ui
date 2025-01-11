@@ -63,8 +63,7 @@ fn main() -> std::process::ExitCode {
     let mut sizing = CustomSizingControl::default();
     sizing.preferred_w = PreferredPortion(0.8);
     sizing.preferred_h = PreferredPortion(0.8);
-    inner_scroller4.sizing_policy = ScrollerSizingPolicy::Custom(sizing);
-    // inner_scroller4.restrict_scroll = false;
+    inner_scroller4.sizing_policy = ScrollerSizingPolicy::Custom(sizing, Default::default());
 
     // contain all of the above in a border
     let mut inner_content_border5 = Border::new(
@@ -83,7 +82,7 @@ fn main() -> std::process::ExitCode {
         &outer_scroll_y,
         &mut inner_content_border5,
     );
-    outer_scroller6.sizing_policy = ScrollerSizingPolicy::Custom(sizing);
+    outer_scroller6.sizing_policy = ScrollerSizingPolicy::Custom(sizing, Default::default());
     outer_scroller6.restrict_scroll = false;
 
     // contain all of the above in a border

@@ -17,14 +17,14 @@ use crate::widget::{
 use super::texture::texture_draw;
 
 /// caches the texture and what was used to create the texture
-struct SingleLineLabelCache<'sdl> {
+pub(crate) struct SingleLineLabelCache<'sdl> {
     pub text_rendered: CompactString,
     pub properties_rendered: TextRenderProperties,
     pub texture: sdl2::render::Texture<'sdl>,
 }
 
 /// caches size of the rendered text
-struct SingleLineLabelSizeCacheData {
+pub(crate) struct SingleLineLabelSizeCacheData {
     /// if this changes the width needs to be recalculated
     pub point_size_used: u16,
     /// if this changes the width needs to be recalculated
@@ -38,7 +38,7 @@ struct SingleLineLabelSizeCacheData {
 /// this cache is used for
 /// - min or max when LenPolicy::Children is used
 /// - preferred_length
-struct SingleLineLabelSizeCache<'sdl> {
+pub(crate) struct SingleLineLabelSizeCache<'sdl> {
     pub cache: Option<SingleLineLabelSizeCacheData>,
     /// dup of the font_interface used by the Label, except this one is used for
     /// the min / max point size (since font interface caches based on point
@@ -66,92 +66,6 @@ impl<'sdl> SingleLineLabelSizeCache<'sdl> {
     }
 }
 
-/// hides internals
-pub struct SingleLineLabelSizeCachePub<'sdl> {
-    cache: SingleLineLabelSizeCache<'sdl>,
-}
-
-impl<'sdl> SingleLineLabelSizeCachePub<'sdl> {
-    /// might take a copy of label_font_interface it this cache doesn't already have one
-    pub fn get_size(&mut self, point_size: u16, text: &str) -> Result<(u32, u32), String> {
-        self.cache.get_size(point_size, text)
-    }
-
-    pub fn new(font_interface: Box<dyn SingleLineFontStyle<'sdl> + 'sdl>) -> Self {
-        Self {
-            cache: SingleLineLabelSizeCache {
-                cache: None,
-                font_interface,
-            },
-        }
-    }
-}
-
-pub enum SingleLineLabelMinWidthPolicy<'sdl> {
-    /// stated literally, ignoring the underlying text
-    Literal(MinLen),
-    /// infer from the minimum text height
-    Infer(SingleLineLabelSizeCachePub<'sdl>),
-}
-
-impl<'sdl> SingleLineLabelMinWidthPolicy<'sdl> {
-    pub fn get_size(&mut self, height: MinLen, text: &str) -> Result<(MinLen, MinLen), String> {
-        let point_size: u16 = match (height.0 as u32).try_into() {
-            Ok(v) => v,
-            Err(_) => u16::MAX,
-        };
-        let r = match self {
-            SingleLineLabelMinWidthPolicy::Literal(v) => (v.0, height.0),
-            SingleLineLabelMinWidthPolicy::Infer(label_width_cache) => {
-                let v = label_width_cache.get_size(point_size, text)?;
-                (v.0 as f32, v.1 as f32)
-            }
-        };
-        Ok((MinLen(r.0), MinLen(r.1)))
-    }
-
-    pub fn new(label: &SingleLineLabel<'sdl, '_>, policy: MinLenPolicy) -> Self {
-        match policy {
-            MinLenPolicy::Children => {
-                SingleLineLabelMinWidthPolicy::Infer(SingleLineLabelSizeCachePub::new(label.font_interface.dup()))
-            }
-            MinLenPolicy::Literal(min_len) => SingleLineLabelMinWidthPolicy::Literal(min_len),
-        }
-    }
-}
-
-pub enum SingleLineLabelMaxWidthPolicy<'sdl> {
-    /// stated literally, ignoring the underlying text
-    Literal(MaxLen),
-    /// infer from the maximum text height
-    Infer(SingleLineLabelSizeCachePub<'sdl>),
-}
-
-impl<'sdl> SingleLineLabelMaxWidthPolicy<'sdl> {
-    pub fn get_size(&mut self, height: MaxLen, text: &str) -> Result<(MaxLen, MaxLen), String> {
-        let point_size: u16 = match (height.0 as u32).try_into() {
-            Ok(v) => v,
-            Err(_) => u16::MAX,
-        };
-        let r = match self {
-            SingleLineLabelMaxWidthPolicy::Literal(v) => (v.0, height.0),
-            SingleLineLabelMaxWidthPolicy::Infer(label_width_cache) => {
-                let v = label_width_cache.get_size(point_size, text)?;
-                (v.0 as f32, v.1 as f32)
-            }
-        };
-        Ok((MaxLen(r.0), MaxLen(r.1)))
-    }
-
-    pub fn new(label: &SingleLineLabel<'sdl, '_>, policy: MaxLenPolicy) -> Self {
-        match policy {
-            MaxLenPolicy::Children => {
-                SingleLineLabelMaxWidthPolicy::Infer(SingleLineLabelSizeCachePub::new(label.font_interface.dup()))
-            }
-            MaxLenPolicy::Literal(min_len) => SingleLineLabelMaxWidthPolicy::Literal(min_len),
-        }
-    }
-}
 
 pub trait SingleLineLabelState {
     /// produce a string from whatever data is being viewed
@@ -197,8 +111,8 @@ pub struct SingleLineLabel<'sdl, 'state> {
     // corresponding width would be for that height
     pub min_h: MinLen,
     pub max_h: MaxLen,
-    pub min_w: SingleLineLabelMinWidthPolicy<'sdl>,
-    pub max_w: SingleLineLabelMaxWidthPolicy<'sdl>,
+    pub min_w_policy: MinLenPolicy,
+    pub max_w_policy: MaxLenPolicy,
     pub preferred_w: PreferredPortion,
     pub preferred_h: PreferredPortion,
 
@@ -215,8 +129,7 @@ impl<'sdl, 'state> SingleLineLabel<'sdl, 'state> {
         creator: &'sdl TextureCreator<WindowContext>,
     ) -> Self {
         let font_interface_dup_for_preferred_len = font_interface.dup();
-
-        let mut r = Self {
+        Self {
             text,
             text_properties,
             font_interface,
@@ -228,8 +141,8 @@ impl<'sdl, 'state> SingleLineLabel<'sdl, 'state> {
             max_w_fail_policy: Default::default(),
             min_h_fail_policy: Default::default(),
             max_h_fail_policy: Default::default(),
-            min_w: SingleLineLabelMinWidthPolicy::Literal(MinLen::LAX), // replace below
-            max_w: SingleLineLabelMaxWidthPolicy::Literal(MaxLen::LAX),
+            min_w_policy: Default::default(),
+            max_w_policy: Default::default(),
             ratio_cache: SingleLineLabelSizeCache {
                 cache: None,
                 font_interface: font_interface_dup_for_preferred_len,
@@ -238,20 +151,16 @@ impl<'sdl, 'state> SingleLineLabel<'sdl, 'state> {
             max_h: Default::default(),
             preferred_w: Default::default(),
             preferred_h: Default::default(),
-        };
-        let min_w = SingleLineLabelMinWidthPolicy::new(&r, MinLenPolicy::Children);
-        let max_w = SingleLineLabelMaxWidthPolicy::new(&r, MaxLenPolicy::Children);
-        r.min_w = min_w;
-        r.max_w = max_w;
-        r
+        }
     }
 }
 
+const LARGE_POINT_SIZE: u16 = 1000;
+
 impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
     fn min(&mut self) -> Result<(MinLen, MinLen), String> {
-        let size = self.min_w.get_size(self.min_h, self.text.get().as_str())?;
-
-        let ratio = size.0.0 as f32 / size.1.0 as f32;
+        let size = self.ratio_cache.get_size(LARGE_POINT_SIZE, self.text.get().as_str())?;
+        let ratio = size.0 as f32 / size.1 as f32;
         let min_w = AspectRatioPreferredDirection::width_from_height(ratio, self.min_h.0);
         Ok((MinLen(min_w), self.min_h))
     }
@@ -265,9 +174,8 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
     }
 
     fn max(&mut self) -> Result<(MaxLen, MaxLen), String> {
-        let size = self.max_w.get_size(self.max_h, self.text.get().as_str())?;
-
-        let ratio = size.0.0 as f32 / size.1.0 as f32;
+        let size = self.ratio_cache.get_size(LARGE_POINT_SIZE, self.text.get().as_str())?;
+        let ratio = size.0 as f32 / size.1 as f32;
         let max_w = AspectRatioPreferredDirection::width_from_height(ratio, self.max_h.0);
         Ok((MaxLen(max_w), self.max_h))
     }

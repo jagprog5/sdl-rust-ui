@@ -261,13 +261,23 @@ pub fn place(
         AspectRatioPreferredDirection::WidthFromHeight => {
             if let Some(new_w) = widget.preferred_width_from_height(h) {
                 let new_w = new_w?;
-                w = clamp(new_w, min_w, max_w.strictest(MaxLen(pre_clamp_w)));
+                let new_w_max_clamp = if widget.preferred_link_allowed_exceed_portion() {
+                    max_w
+                } else {
+                    max_w.strictest(MaxLen(pre_clamp_w))
+                };
+                w = clamp(new_w, min_w, max_w.strictest(new_w_max_clamp));
             }
         }
         AspectRatioPreferredDirection::HeightFromWidth => {
             if let Some(new_h) = widget.preferred_height_from_width(w) {
                 let new_h = new_h?;
-                h = clamp(new_h, min_h, max_h.strictest(MaxLen(pre_clamp_h)));
+                let new_h_max_clamp = if widget.preferred_link_allowed_exceed_portion() {
+                    max_h
+                } else {
+                    max_h.strictest(MaxLen(pre_clamp_h))
+                };
+                h = clamp(new_h, min_h, max_h.strictest(new_h_max_clamp));
             }
         }
     }

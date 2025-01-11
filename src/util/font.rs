@@ -51,6 +51,7 @@ impl<'sdl> FontManager<'sdl> {
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum SingleLineTextRenderType {
+    #[deprecated(note="looks like sh**")]
     Solid(Color),
     /// foreground, background, respectively
     Shaded(Color, Color),
@@ -191,6 +192,7 @@ impl<'sdl> SingleLineFontStyle<'sdl> for TextRenderer<'sdl> {
 
             let partial_render = font.render(text);
             let surface = match properties.render_type {
+                #[allow(deprecated)]
                 SingleLineTextRenderType::Solid(color) => partial_render.solid(color),
                 SingleLineTextRenderType::Shaded(color, background) => {
                     partial_render.shaded(color, background)

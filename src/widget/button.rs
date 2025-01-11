@@ -134,8 +134,8 @@ impl<'sdl, 'state> TextureVariantStyle<ButtonTextureVariant> for DefaultButtonSt
     }
 }
 
-pub struct Button<'sdl> {
-    pub functionality: Box<dyn FnMut() -> Result<(), String> + 'sdl>,
+pub struct Button<'sdl, 'state> {
+    pub functionality: Box<dyn FnMut() -> Result<(), String> + 'state>,
     pub focus_id: FocusID,
     pressed: bool, // internal state for drawing
 
@@ -146,9 +146,9 @@ pub struct Button<'sdl> {
     focus_pressed: TextureVariantSizeCache<'sdl, ButtonTextureVariant>,
 }
 
-impl<'sdl> Button<'sdl> {
+impl<'sdl, 'state> Button<'sdl, 'state> {
     pub fn new(
-        functionality: Box<dyn FnMut() -> Result<(), String> + 'sdl>,
+        functionality: Box<dyn FnMut() -> Result<(), String> + 'state>,
         focus_id: FocusID,
         style: Box<dyn ButtonStyle<ButtonTextureVariant> + 'sdl>,
         creator: &'sdl TextureCreator<WindowContext>,
@@ -166,7 +166,7 @@ impl<'sdl> Button<'sdl> {
     }
 }
 
-impl<'sdl> Widget for Button<'sdl> {
+impl<'sdl, 'state> Widget for Button<'sdl, 'state> {
     fn min(&mut self) -> Result<(MinLen, MinLen), String> {
         self.style.as_mut_widget().min()
     }

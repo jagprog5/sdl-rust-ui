@@ -112,17 +112,13 @@ impl Default for MaxLen {
     }
 }
 
-pub fn clamp(len: f32, min: MinLen, max: MaxLen) -> f32 {
-    if min.0 >= max.0 {
-        return min.0;
-    }
-    
-    if len < min.0 {
-        return min.0
-    }
-    
+pub fn clamp(mut len: f32, min: MinLen, max: MaxLen) -> f32 {
     if len > max.0 {
-        return max.0;
+        len = max.0;
+    }
+
+    if len < min.0 {
+        len = min.0;
     }
 
     len
@@ -170,18 +166,11 @@ impl PreferredPortion {
     pub fn weighted_portion(
         &self,
         sum_portions: PreferredPortion,
-        mut num_portions: usize,
         parent_len: f32,
     ) -> f32 {
-        if num_portions == 0 {
-            debug_assert!(false);
-            num_portions = 1;
-        }
-
         let p = if sum_portions.0 == 0. {
-            // entirely possible that each component is zero preferred portion.
-            // this is handled by giving each portion an equal amount
-            PreferredPortion(1. / num_portions as f32)
+            // entirely possible that each component is zero preferred portion
+            PreferredPortion::EMPTY
         } else {
             PreferredPortion(self.0 / sum_portions.0)
         };
