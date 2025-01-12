@@ -1,6 +1,6 @@
 use std::cell::Cell;
 
-use sdl2::{mouse::MouseButton, rect::Rect, render::ClippingRect};
+use sdl2::mouse::{MouseButton, SystemCursor};
 
 use crate::{
     util::{length::AspectRatioPreferredDirection, rect::FRect},
@@ -9,6 +9,8 @@ use crate::{
         widget::{place, ConsumedStatus, Widget, WidgetEvent},
     },
 };
+
+use super::clipper::clipping_rect_intersection;
 
 #[derive(Debug)]
 enum DragState {
@@ -35,9 +37,68 @@ pub enum ScrollerSizingPolicy {
     Children,
     /// states literally, ignoring the contained widget. the contained widget
     /// will then be placed within the scroll widget's bounds
-    /// 
+    ///
     /// give an aspect ratio direction to be given to the contained widget
     Custom(CustomSizingControl, ScrollAspectRatioDirectionPolicy),
+}
+
+struct ScrollerCursorCache {
+    /// this type is:
+    ///  - outer optional, is the cache set or not
+    ///  - inner optional, the cache is set, but None if sdl call failed (this
+    ///    api in infallible - should not err on sdl2 cursor set failure)
+    ///
+    /// when freed it clears the cursor if it is currently set
+    cursor: Option<Option<sdl2::mouse::Cursor>>,
+    /// cursor loaded is appropriate for this
+    scroll_x_enabled: bool,
+    /// cursor loaded is appropriate for this
+    scroll_y_enabled: bool,
+}
+
+impl ScrollerCursorCache {
+    pub fn clear(&mut self) {
+        self.cursor = None;
+    }
+
+    pub fn set_or_use_cache(&mut self, scroll_x_enabled: bool, scroll_y_enabled: bool) {
+        if !scroll_x_enabled && !scroll_y_enabled {
+            self.cursor = None;
+            return;
+        }
+
+        if self.cursor.is_none()
+            || self.scroll_x_enabled != scroll_x_enabled
+            || self.scroll_y_enabled != scroll_y_enabled
+        {
+            self.scroll_x_enabled = scroll_x_enabled;
+            self.scroll_y_enabled = scroll_y_enabled;
+
+            let cursor_to_request = if scroll_x_enabled && scroll_y_enabled {
+                SystemCursor::SizeAll
+            } else if scroll_x_enabled {
+                SystemCursor::SizeWE
+            } else {
+                SystemCursor::SizeNS
+            };
+
+            let cursor_result = sdl2::mouse::Cursor::from_system(cursor_to_request);
+            debug_assert!(cursor_result.is_ok());
+            let cursor_optional = cursor_result.ok();
+            cursor_optional.as_ref().map(|cursor| cursor.set());
+            self.cursor = Some(cursor_optional);
+        }
+    }
+}
+
+impl Default for ScrollerCursorCache {
+    fn default() -> Self {
+        Self {
+            cursor: Default::default(),
+            scroll_x_enabled: Default::default(),
+            scroll_y_enabled: Default::default(),
+        }
+    }
 }
 
 /// translates its content - facilitates scrolling
@@ -68,6 +129,8 @@ pub struct Scroller<'sdl, 'state> {
     pub sizing_policy: ScrollerSizingPolicy,
     /// true restricts the scrolling to keep the contained in frame
     pub restrict_scroll: bool,
+
+    cursor_cache: ScrollerCursorCache,
 }
 
 impl<'sdl, 'state> Scroller<'sdl, 'state> {
@@ -89,99 +152,71 @@ impl<'sdl, 'state> Scroller<'sdl, 'state> {
             contained: contains,
             restrict_scroll: true,
             sizing_policy: ScrollerSizingPolicy::Children,
+            cursor_cache: Default::default(),
         }
     }
 }
 
-fn clipping_rect_intersection(
-    existing_clipping_rect: ClippingRect,
-    position: Option<Rect>,
-) -> ClippingRect {
-    match position {
-        Some(position) => {
-            match existing_clipping_rect {
-                ClippingRect::Some(rect) => match rect.intersection(position) {
-                    Some(v) => ClippingRect::Some(v),
-                    None => ClippingRect::Zero,
-                },
-                ClippingRect::Zero => ClippingRect::Zero,
-                ClippingRect::None => {
-                    // clipping rect has infinite area, so it's just whatever position is
-                    ClippingRect::Some(position)
-                }
-            }
-        }
-        None => {
-            // position is zero area so intersection result is zero
-            ClippingRect::Zero
-        }
-    }
-}
-
+/// apply even if scroll is not enabled (as what if it was enabled previously
+/// and content was moved off screen)
 fn apply_scroll_restrictions(
     mut position_for_contained: crate::util::rect::FRect,
     event_position: crate::util::rect::FRect,
-    scroll_y_enabled: bool,
-    scroll_x_enabled: bool,
     scroll_y: &mut i32,
     scroll_x: &mut i32,
 ) {
     position_for_contained.x += *scroll_x as f32;
     position_for_contained.y += *scroll_y as f32;
 
-    if scroll_y_enabled {
-        if position_for_contained.h < event_position.h {
-            // the contained thing is smaller than the parent
-            let violating_top = position_for_contained.y < event_position.y;
-            let violating_bottom = position_for_contained.y + position_for_contained.h
-                > event_position.y + event_position.h;
+    if position_for_contained.h < event_position.h {
+        // the contained thing is smaller than the parent
+        let violating_top = position_for_contained.y < event_position.y;
+        let violating_bottom = position_for_contained.y + position_for_contained.h
+            > event_position.y + event_position.h;
 
-            if violating_top {
-                *scroll_y += (event_position.y - position_for_contained.y) as i32;
-            } else if violating_bottom {
-                *scroll_y -= ((position_for_contained.y + position_for_contained.h)
-                    - (event_position.y + event_position.h)) as i32;
-            }
-        } else {
-            let down_from_top = position_for_contained.y > event_position.y;
+        if violating_top {
+            *scroll_y += (event_position.y - position_for_contained.y) as i32;
+        } else if violating_bottom {
+            *scroll_y -= ((position_for_contained.y + position_for_contained.h)
+                - (event_position.y + event_position.h)) as i32;
+        }
+    } else {
+        let down_from_top = position_for_contained.y > event_position.y;
 
-            let up_from_bottom = position_for_contained.y + position_for_contained.h
-                < event_position.y + event_position.h;
+        let up_from_bottom = position_for_contained.y + position_for_contained.h
+            < event_position.y + event_position.h;
 
-            if down_from_top {
-                *scroll_y += (event_position.y - position_for_contained.y) as i32;
-            } else if up_from_bottom {
-                *scroll_y -= ((position_for_contained.y + position_for_contained.h)
-                    - (event_position.y + event_position.h)) as i32;
-            }
+        if down_from_top {
+            *scroll_y += (event_position.y - position_for_contained.y) as i32;
+        } else if up_from_bottom {
+            *scroll_y -= ((position_for_contained.y + position_for_contained.h)
+                - (event_position.y + event_position.h)) as i32;
         }
     }
 
-    if scroll_x_enabled {
-        if position_for_contained.w < event_position.w {
-            // the contained thing is smaller than the parent
-            let violating_left = position_for_contained.x < event_position.x;
-            let violating_right = position_for_contained.x + position_for_contained.w
-                > event_position.x + event_position.w;
+    if position_for_contained.w < event_position.w {
+        // the contained thing is smaller than the parent
+        let violating_left = position_for_contained.x < event_position.x;
+        let violating_right = position_for_contained.x + position_for_contained.w
+            > event_position.x + event_position.w;
 
-            if violating_left {
-                *scroll_x += (event_position.x - position_for_contained.x) as i32;
-            } else if violating_right {
-                *scroll_x -= ((position_for_contained.x + position_for_contained.w)
-                    - (event_position.x + event_position.w)) as i32;
-            }
-        } else {
-            let left_from_right = position_for_contained.x > event_position.x;
+        if violating_left {
+            *scroll_x += (event_position.x - position_for_contained.x) as i32;
+        } else if violating_right {
+            *scroll_x -= ((position_for_contained.x + position_for_contained.w)
+                - (event_position.x + event_position.w)) as i32;
+        }
+    } else {
+        let left_from_right = position_for_contained.x > event_position.x;
 
-            let right_from_left = position_for_contained.x + position_for_contained.w
-                < event_position.x + event_position.w;
+        let right_from_left = position_for_contained.x + position_for_contained.w
+            < event_position.x + event_position.w;
 
-            if left_from_right {
-                *scroll_x += (event_position.x - position_for_contained.x) as i32;
-            } else if right_from_left {
-                *scroll_x -= ((position_for_contained.x + position_for_contained.w)
-                    - (event_position.x + event_position.w)) as i32;
-            }
+        if left_from_right {
+            *scroll_x += (event_position.x - position_for_contained.x) as i32;
+        } else if right_from_left {
+            *scroll_x -= ((position_for_contained.x + position_for_contained.w)
+                - (event_position.x + event_position.w)) as i32;
         }
     }
 }
@@ -351,8 +386,6 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
             apply_scroll_restrictions(
                 position_for_contained,
                 event.position,
-                self.scroll_y_enabled,
-                self.scroll_x_enabled,
                 &mut scroll_y,
                 &mut scroll_x,
             );
@@ -397,11 +430,13 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                     direction,
                     ..
                 } => {
-                    let multiplier: i32 = match direction {
+                    let mut multiplier: i32 = match direction {
                         sdl2::mouse::MouseWheelDirection::Flipped => -1,
                         _ => 1,
                     };
-
+                    if position_for_contained.h > event.position.h {
+                        multiplier *= -1;
+                    }
                     // only look at wheel when mouse over scroll area
                     let pos: Option<sdl2::rect::Rect> = event.position.into();
                     if pos
@@ -419,14 +454,16 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                             return;
                         }
                         e.set_consumed_by_layout();
-                        scroll_x -= multiplier * x * self.mouse_wheel_sensitivity;
-                        scroll_y -= multiplier * y * self.mouse_wheel_sensitivity;
+                        if self.scroll_x_enabled {
+                            scroll_x -= multiplier * x * self.mouse_wheel_sensitivity;
+                        }
+                        if self.scroll_y_enabled {
+                            scroll_y -= multiplier * y * self.mouse_wheel_sensitivity;
+                        }
                         if self.restrict_scroll {
                             apply_scroll_restrictions(
                                 position_for_contained,
                                 event.position,
-                                self.scroll_y_enabled,
-                                self.scroll_x_enabled,
                                 &mut scroll_y,
                                 &mut scroll_x,
                             );
@@ -445,8 +482,6 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                             apply_scroll_restrictions(
                                 position_for_contained,
                                 event.position,
-                                self.scroll_y_enabled,
-                                self.scroll_x_enabled,
                                 &mut scroll_y,
                                 &mut scroll_x,
                             );
@@ -500,20 +535,34 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
 
                     if let DragState::Dragging((drag_x, drag_y)) = self.drag_state {
                         e.set_consumed_by_layout();
-                        scroll_x = x - drag_x;
-                        scroll_y = y - drag_y;
+                        if self.scroll_x_enabled {
+                            scroll_x = x - drag_x;
+                        }
+                        if self.scroll_y_enabled {
+                            scroll_y = y - drag_y;
+                        }
                     }
                 }
                 _ => {}
             });
 
-        // sync changes
-        if self.scroll_x_enabled {
-            self.scroll_x.set(scroll_x);
+        // sync changes. the scroll_x and scroll_y local vars should not have
+        // been changed if the scroll wasn't enabled, with the exception of
+        // scroll restrictions
+        self.scroll_x.set(scroll_x);
+        self.scroll_y.set(scroll_y);
+
+        // update cursor based on drag state
+        match self.drag_state {
+            DragState::Dragging(_) => {
+                self.cursor_cache
+                    .set_or_use_cache(self.scroll_x_enabled, self.scroll_y_enabled);
+            }
+            _ => {
+                self.cursor_cache.clear();
+            }
         }
-        if self.scroll_y_enabled {
-            self.scroll_y.set(scroll_y);
-        }
+
         update_result
     }
 
@@ -541,7 +590,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                     ScrollAspectRatioDirectionPolicy::Literal(dir) => *dir,
                 };
                 place(self.contained, event.position, dir)?
-            },
+            }
         };
 
         let draw_result = self.contained.draw(event.sub_event(position_for_contained));

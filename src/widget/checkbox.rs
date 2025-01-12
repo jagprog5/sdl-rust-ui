@@ -192,7 +192,7 @@ impl TextureVariantStyle<CheckBoxTextureVariant> for DefaultCheckBoxStyle {
 }
 
 /// A cache for managing and reusing textures based on some style variant and size.
-pub struct TextureVariantSizeCache<'sdl, TVariant> {
+pub(crate) struct TextureVariantSizeCache<'sdl, TVariant> {
     pub cache: Option<sdl2::render::Texture<'sdl>>,
     _marker: std::marker::PhantomData<TVariant>,
 }
@@ -258,9 +258,10 @@ pub struct CheckBox<'sdl, 'state> {
     pub focus_id: FocusID,
     pressed: bool,
 
-    style: Box<dyn TextureVariantStyle<CheckBoxTextureVariant> + 'sdl>,
     pub size: f32,
     creator: &'sdl TextureCreator<WindowContext>,
+    
+    style: Box<dyn TextureVariantStyle<CheckBoxTextureVariant> + 'sdl>,
     idle: TextureVariantSizeCache<'sdl, CheckBoxTextureVariant>,
     focused: TextureVariantSizeCache<'sdl, CheckBoxTextureVariant>,
     focused_pressed: TextureVariantSizeCache<'sdl, CheckBoxTextureVariant>,

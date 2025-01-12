@@ -4,7 +4,7 @@ use tiny_sdl2_gui::{
         horizontal_layout::HorizontalLayout,
         vertical_layout::{MajorAxisMaxLenPolicy, VerticalLayout},
     },
-    util::length::{MaxLenFailPolicy, MinLenFailPolicy, MinLenPolicy},
+    util::length::{MaxLenFailPolicy, MinLen, MinLenFailPolicy, MinLenPolicy},
     widget::{
         debug::Debug,
         strut::Strut,
@@ -22,6 +22,8 @@ fn main() -> std::process::ExitCode {
     const RESTRICT_MIN_SIZE: bool = false;
 
     let mut horizontal_layout = HorizontalLayout::default();
+    // allow to be smaller than children, to show min len fail policies
+    horizontal_layout.min_h_policy = MinLenPolicy::Literal(MinLen::LAX);
 
     let mut binding = Debug {
         min_h: (HEIGHT - 20.).into(),
@@ -128,11 +130,7 @@ fn main() -> std::process::ExitCode {
     'running: loop {
         for event in sdl.event_pump.poll_iter() {
             match event {
-                sdl2::event::Event::Quit { .. }
-                | sdl2::event::Event::KeyDown {
-                    keycode: Some(sdl2::keyboard::Keycode::Escape),
-                    ..
-                } => {
+                sdl2::event::Event::Quit { .. } => {
                     break 'running;
                 }
                 _ => {
@@ -183,6 +181,15 @@ fn main() -> std::process::ExitCode {
                     } => {
                         e.set_consumed(); // intentional redundant
                         println!("nothing was clicked! {:?}", (x, y));
+                    }
+                    sdl2::event::Event::KeyDown {
+                        keycode: Some(sdl2::keyboard::Keycode::Escape),
+                        repeat: false,
+                        ..
+                    } => {
+                        // if unprocessed escape key
+                        e.set_consumed(); // intentional redundant
+                        break 'running;
                     }
                     _ => {}
                 }

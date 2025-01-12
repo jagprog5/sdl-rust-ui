@@ -31,19 +31,18 @@ Widgets
  - [vertical layout](./src/layout/vertical_layout.rs)
  - [horizontal layout](./src/layout/horizontal_layout.rs)
  - [scroll area](./src/layout/scroller.rs)
+ - [clipper](./src/layout/clipper.rs)
  - [debug](./src/widget/debug.rs), for testing sizing
  - [strut](./src/widget/strut.rs), forces spaces
  - [background](./src/widget/background.rs), parallel software rendering of a background texture
  - [border](./src/widget/border.rs), contains a widget in a border with a border style
  - [texture](./src/widget/texture.rs), generic texture display with sizing control
  - [single](./src/widget/single_line_label.rs) and [multiline](./src/widget/multi_line_label.rs) labels
- - [single line text input](./src/widget/single_line_text_input.rs) (in progress)
+ - basic [single line text input](./src/widget/single_line_text_input.rs)
  - [button](./src/widget/button.rs)
  - [checkbox](./src/widget/checkbox.rs)
 
 ## TODO
 
-- vertical + horizontal scroll bar widget
-- text input widget
 - audio
-- (maybe) better default style
+- general improvements

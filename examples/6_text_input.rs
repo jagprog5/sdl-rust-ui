@@ -22,7 +22,7 @@ use tiny_sdl2_gui::{
         debug::CustomSizingControl,
         multi_line_label::{MultiLineLabel, MultiLineMinHeightFailPolicy},
         single_line_label::SingleLineLabel,
-        single_line_text_input::{DefaultSingleLineTextEditState, SingleLineTextInput},
+        single_line_text_input::{DefaultSingleLineEditStyle, DefaultSingleLineTextEditState, SingleLineTextEditState, SingleLineTextInput},
         widget::{draw_gui, update_gui, SDLEvent},
     },
 };
@@ -88,6 +88,7 @@ fn main() -> std::process::ExitCode {
 
     let mut text_input = SingleLineTextInput::new(
         Box::new(|| Ok(())), // replaced below
+        Box::new(DefaultSingleLineEditStyle::default()),
         focus_manager.next_available_id(),
         &text_str,
         SingleLineTextRenderType::Blended(Color::WHITE),
@@ -96,11 +97,12 @@ fn main() -> std::process::ExitCode {
     );
 
     let text_entered_functionality = || {
-        let text_content = text_input.text.get();
+        let text_content = text_str.get();
         if text_content.len() == 0 {
             return Ok(());
         }
-        text_input.text.set("".into());
+        text_str.set("".into());
+        scroll_y.set(0);
 
         let mut multiline_content = multiline_text.take();
         multiline_content += "\n";
@@ -110,6 +112,12 @@ fn main() -> std::process::ExitCode {
     };
 
     text_input.functionality = Box::new(text_entered_functionality);
+
+    let mut text_input = Border::new(
+        &mut text_input,
+        &sdl.texture_creator,
+        Box::new(Empty { width: 2 }),
+    );
 
     let binding = CompactString::from("=>");
     let mut enter_button_content = SingleLineLabel::new(
@@ -160,11 +168,7 @@ fn main() -> std::process::ExitCode {
     'running: loop {
         for event in sdl.event_pump.poll_iter() {
             match event {
-                sdl2::event::Event::Quit { .. }
-                | sdl2::event::Event::KeyDown {
-                    keycode: Some(sdl2::keyboard::Keycode::Escape),
-                    ..
-                } => {
+                sdl2::event::Event::Quit { .. } => {
                     break 'running;
                 }
                 _ => {
@@ -201,6 +205,20 @@ fn main() -> std::process::ExitCode {
                 }
             }
             FocusManager::default_start_focus_behavior(&mut focus_manager, &mut events_accumulator);
+            for e in events_accumulator.iter_mut().filter(|e| e.available()) {
+                match e.e {
+                    sdl2::event::Event::KeyDown {
+                        keycode: Some(sdl2::keyboard::Keycode::Escape),
+                        repeat: false,
+                        ..
+                    } => {
+                        // if unprocessed escape key
+                        e.set_consumed(); // intentional redundant
+                        break 'running;
+                    }
+                    _ => {}
+                }
+            }
             events_accumulator.clear(); // clear after use
             sdl.canvas.present();
         }

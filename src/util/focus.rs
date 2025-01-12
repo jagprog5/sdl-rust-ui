@@ -38,11 +38,8 @@ impl FocusManager {
         self.current_focus = Some(id.0);
     }
 
-    /// only if this widget has focus then remove focus
-    pub fn unfocus(&mut self, id: FocusID) {
-        if self.is_focused(id) {
-            self.current_focus = None;
-        }
+    pub fn unfocus(&mut self) {
+        self.current_focus = None;
     }
 
     pub fn set_next_focused(&mut self) {
@@ -69,40 +66,30 @@ impl FocusManager {
 
     /// handle default behavior for how focus should change given the events:
     /// - tab goes to next, shift + tab goes to previous
-    /// - mouse moved on/off widget gains/loses focus
+    /// - mouse moved over widget gains focus
+    /// - escape key causes unfocus
     ///
-    /// this function may consume tab events
+    /// this function may consume tab and escape key events
     pub fn default_widget_focus_behavior(my_focus_id: FocusID, event: &mut WidgetEvent) {
         let focus_manager = match &mut event.focus_manager {
             Some(v) => v,
             None => return,
         };
-        for sdl_input in event.events.iter_mut() {
+        for sdl_input in event.events.iter_mut().filter(|e| e.available()) {
             match sdl_input.e {
                 sdl2::event::Event::MouseMotion { x, y, .. } => {
-                    let mut has_point = false;
-
-                    // if event is consumed, it's considered not over this widget for focus purposes
-                    if sdl_input.available() { 
-                        let position: Option<sdl2::rect::Rect> = event.position.into();
-                        if let Some(position) = position {
-                            let point_contained_in_clipping_rect = match event.canvas.clip_rect() {
-                                sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
-                                sdl2::render::ClippingRect::Zero => false,
-                                sdl2::render::ClippingRect::None => true,
-                            };
-                            // ignore mouse events out of position bounds and
-                            // out of scroll area clipping rect
-                            if position.contains_point((x, y)) && point_contained_in_clipping_rect {
-                                has_point = true;
-                            }
+                    let position: Option<sdl2::rect::Rect> = event.position.into();
+                    if let Some(position) = position {
+                        let point_contained_in_clipping_rect = match event.canvas.clip_rect() {
+                            sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
+                            sdl2::render::ClippingRect::Zero => false,
+                            sdl2::render::ClippingRect::None => true,
+                        };
+                        // ignore mouse events out of position bounds and
+                        // out of scroll area clipping rect
+                        if position.contains_point((x, y)) && point_contained_in_clipping_rect {
+                            focus_manager.set_focus(my_focus_id);
                         }
-                    }
-
-                    if has_point {
-                        focus_manager.set_focus(my_focus_id);
-                    } else {
-                        focus_manager.unfocus(my_focus_id);
                     }
                 }
                 sdl2::event::Event::KeyDown {
@@ -111,9 +98,6 @@ impl FocusManager {
                     keymod,
                     ..
                 } => {
-                    if sdl_input.consumed() {
-                        continue;
-                    }
                     if !focus_manager.is_focused(my_focus_id) {
                         continue; // only process tab if I am focused
                     }
@@ -125,6 +109,17 @@ impl FocusManager {
                         // tab was pressed
                         focus_manager.set_next_focused();
                     }
+                }
+                sdl2::event::Event::KeyDown {
+                    repeat: false,
+                    keycode: Some(Keycode::ESCAPE),
+                    ..
+                } => {
+                    if !focus_manager.is_focused(my_focus_id) {
+                        continue; // only process escape if I am focused
+                    }
+                    sdl_input.set_consumed();
+                    focus_manager.unfocus();
                 }
                 _ => {}
             }

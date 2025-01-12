@@ -105,11 +105,7 @@ fn main() -> std::process::ExitCode {
     'running: loop {
         for event in sdl.event_pump.poll_iter() {
             match event {
-                sdl2::event::Event::Quit { .. }
-                | sdl2::event::Event::KeyDown {
-                    keycode: Some(sdl2::keyboard::Keycode::Escape),
-                    ..
-                } => {
+                sdl2::event::Event::Quit { .. } => {
                     break 'running;
                 }
                 _ => {
@@ -146,6 +142,20 @@ fn main() -> std::process::ExitCode {
                 }
             }
             FocusManager::default_start_focus_behavior(&mut focus_manager, &mut events_accumulator);
+            for e in events_accumulator.iter_mut().filter(|e| e.available()) {
+                match e.e {
+                    sdl2::event::Event::KeyDown {
+                        keycode: Some(sdl2::keyboard::Keycode::Escape),
+                        repeat: false,
+                        ..
+                    } => {
+                        // if unprocessed escape key
+                        e.set_consumed(); // intentional redundant
+                        break 'running;
+                    }
+                    _ => {}
+                }
+            }
             events_accumulator.clear(); // clear after use
             sdl.canvas.present();
         }

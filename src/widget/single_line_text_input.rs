@@ -1,9 +1,19 @@
 use std::cell::Cell;
 
 use compact_str::CompactString;
-use sdl2::{keyboard::Keycode, render::TextureCreator, video::WindowContext};
+use sdl2::{
+    keyboard::Keycode,
+    pixels::{Color, PixelFormatEnum},
+    rect::Point,
+    render::{Canvas, Texture, TextureCreator},
+    video::{Window, WindowContext},
+};
 
-use crate::util::{focus::{FocusID, FocusManager}, font::{SingleLineFontStyle, SingleLineTextRenderType, TextRenderProperties}, length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy, PreferredPortion}};
+use crate::util::{
+    focus::{FocusID, FocusManager},
+    font::{SingleLineFontStyle, SingleLineTextRenderType, TextRenderProperties},
+    length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy, PreferredPortion},
+};
 
 use super::{single_line_label::SingleLineLabelCache, widget::Widget};
 
@@ -27,9 +37,179 @@ impl SingleLineTextEditState for DefaultSingleLineTextEditState {
         self.inner.set(temp_v);
         ret
     }
-    
+
     fn set(&self, new: CompactString) {
         self.inner.set(new);
+    }
+}
+
+pub trait SingleLineTextEditStyle {
+    /// The texture will be redrawn only if the target dimensions change.
+    ///
+    /// This is drawn underneath of the underlying text
+    fn draw(
+        &mut self,
+        focused: bool,
+        text: &str,
+        canvas: &mut Canvas<Window>,
+        caret_position: u32,
+    ) -> Result<(), String>;
+}
+
+/// a default provided single line text edit style
+pub struct DefaultSingleLineEditStyle {}
+
+impl Default for DefaultSingleLineEditStyle {
+    fn default() -> Self {
+        Self {}
+    }
+}
+
+impl SingleLineTextEditStyle for DefaultSingleLineEditStyle {
+    fn draw(
+        &mut self,
+        focused: bool,
+        text: &str,
+        canvas: &mut Canvas<Window>,
+        caret_position: u32,
+    ) -> Result<(), String> {
+        let _text = text; // todo!
+
+        let size = canvas.output_size().map_err(|e| e.to_string())?;
+
+        let amount_inward = 5i32;
+
+        if size.0 <= amount_inward as u32 || size.1 <= amount_inward as u32 {
+            return Ok(()); // too small to draw properly
+        }
+
+        let color = if focused {
+            Color::RGB(118, 73, 206)
+        } else {
+            Color::RGB(50, 50, 50)
+        };
+
+        canvas.set_draw_color(color);
+
+        let top_left_points = [
+            Point::new(amount_inward, 0),
+            Point::new(0, 0),
+            Point::new(0, amount_inward),
+        ];
+
+        let bottom_left_points = [
+            Point::new(amount_inward, size.1 as i32 - 1),
+            Point::new(0, size.1 as i32 - 1),
+            Point::new(0, size.1 as i32 - 1 - amount_inward),
+        ];
+
+        let top_right_points = [
+            Point::new(size.0 as i32 - 1 - amount_inward, 0),
+            Point::new(size.0 as i32 - 1, 0),
+            Point::new(size.0 as i32 - 1, amount_inward),
+        ];
+
+        let bottom_right_points = [
+            Point::new(size.0 as i32 - 1 - amount_inward, size.1 as i32 - 1),
+            Point::new(size.0 as i32 - 1, size.1 as i32 - 1),
+            Point::new(size.0 as i32 - 1, size.1 as i32 - 1 - amount_inward),
+        ];
+
+        let all_points = [
+            top_left_points,
+            top_right_points,
+            bottom_left_points,
+            bottom_right_points,
+        ];
+
+        for points in all_points {
+            canvas.draw_lines(points.as_ref())?;
+        }
+
+        let caret_position = caret_position as i32;
+        let caret_horizontal_spacing = 2;
+        if caret_position > amount_inward + caret_horizontal_spacing && caret_position < size.0 as i32 - 1 - amount_inward - caret_horizontal_spacing {
+            // big caret not at beginning or end
+            canvas.draw_line(
+                Point::new(caret_position as i32, 0),
+                Point::new(caret_position as i32, size.1 as i32),
+            )?;
+        } else {
+            // small caret
+            let caret_vertical_spacing = 5;
+            canvas.draw_line(
+                Point::new(caret_position as i32, amount_inward + 2 + caret_vertical_spacing),
+                Point::new(caret_position as i32, size.1 as i32 - (amount_inward + 3 + caret_vertical_spacing)),
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+/// A cache for managing and reusing textures based on size and text
+struct TextureVariantSizeCache<'sdl> {
+    pub cache: Option<sdl2::render::Texture<'sdl>>,
+    /// if this changes, the cache needs to be recomputed
+    pub text_used: CompactString,
+}
+
+impl<'sdl> Default for TextureVariantSizeCache<'sdl> {
+    fn default() -> Self {
+        Self {
+            cache: None,
+            text_used: "".into(),
+        }
+    }
+}
+
+impl<'sdl> TextureVariantSizeCache<'sdl> {
+    /// render txt or use the cache.  
+    /// style is the style used to render the texture, with size.  
+    /// creator is the texture creator for the canvas.  
+    /// canvas is the window canvas.
+    pub fn render(
+        &mut self,
+        style: &mut dyn SingleLineTextEditStyle,
+        focused: bool,
+        size: (u32, u32),
+        text: CompactString,
+        creator: &'sdl TextureCreator<WindowContext>,
+        canvas: &mut Canvas<Window>,
+        caret_position: u32,
+    ) -> Result<&'_ Texture<'sdl>, String> {
+        let cache = match self.cache.take().filter(|cache| {
+            let q = cache.query();
+            (q.width, q.height) == size && self.text_used == text
+        }) {
+            Some(cache) => cache, // reuse cache
+            None => {
+                // the size has changed or this is the first time calling.
+                // either way, needs re-render
+                let mut texture = creator
+                    .create_texture_target(PixelFormatEnum::ARGB8888, size.0, size.1)
+                    .map_err(|e| e.to_string())?;
+                texture.set_blend_mode(sdl2::render::BlendMode::Blend);
+
+                let mut e_out: Option<String> = None;
+                canvas
+                    .with_texture_canvas(&mut texture, |canvas| {
+                        canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
+                        canvas.clear(); // required to prevent flickering
+
+                        e_out = style.draw(focused, &text, canvas, caret_position).err();
+                    })
+                    .map_err(|e| e.to_string())?;
+
+                if let Some(e) = e_out {
+                    return Err(e);
+                }
+                self.text_used = text;
+                texture
+            }
+        };
+
+        Ok(self.cache.insert(cache))
     }
 }
 
@@ -39,6 +219,10 @@ pub struct SingleLineTextInput<'sdl, 'state> {
     pub functionality: Box<dyn FnMut() -> Result<(), String> + 'state>,
 
     pub focus_id: FocusID,
+
+    style: Box<dyn SingleLineTextEditStyle + 'sdl>,
+    focused: TextureVariantSizeCache<'sdl>,
+    not_focused: TextureVariantSizeCache<'sdl>,
 
     pub text: &'state dyn SingleLineTextEditState,
     pub text_properties: SingleLineTextRenderType,
@@ -58,15 +242,19 @@ pub struct SingleLineTextInput<'sdl, 'state> {
 
 impl<'sdl, 'state> SingleLineTextInput<'sdl, 'state> {
     pub fn new(
-            functionality: Box<dyn FnMut() -> Result<(), String> + 'state>,
-            focus_id: FocusID,
-            text: &'state dyn SingleLineTextEditState,
-            text_properties: SingleLineTextRenderType,
-            font_interface: Box<dyn SingleLineFontStyle<'sdl> + 'sdl>,
-            creator: &'sdl TextureCreator<WindowContext>,
-        ) -> Self {
+        functionality: Box<dyn FnMut() -> Result<(), String> + 'state>,
+        style: Box<dyn SingleLineTextEditStyle + 'sdl>,
+        focus_id: FocusID,
+        text: &'state dyn SingleLineTextEditState,
+        text_properties: SingleLineTextRenderType,
+        font_interface: Box<dyn SingleLineFontStyle<'sdl> + 'sdl>,
+        creator: &'sdl TextureCreator<WindowContext>,
+    ) -> Self {
         Self {
             functionality,
+            style,
+            focused: Default::default(),
+            not_focused: Default::default(),
             focus_id,
             text,
             text_properties,
@@ -84,7 +272,9 @@ impl<'sdl, 'state> SingleLineTextInput<'sdl, 'state> {
 }
 
 impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
-    fn min(&mut self) -> Result<(crate::util::length::MinLen, crate::util::length::MinLen), String> {
+    fn min(
+        &mut self,
+    ) -> Result<(crate::util::length::MinLen, crate::util::length::MinLen), String> {
         Ok((MinLen::LAX, self.min_h))
     }
 
@@ -92,7 +282,9 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
         self.min_h_fail_policy
     }
 
-    fn max(&mut self) -> Result<(crate::util::length::MaxLen, crate::util::length::MaxLen), String> {
+    fn max(
+        &mut self,
+    ) -> Result<(crate::util::length::MaxLen, crate::util::length::MaxLen), String> {
         Ok((MaxLen::LAX, self.max_h))
     }
 
@@ -100,7 +292,12 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
         self.max_h_fail_policy
     }
 
-    fn preferred_portion(&self) -> (crate::util::length::PreferredPortion, crate::util::length::PreferredPortion) {
+    fn preferred_portion(
+        &self,
+    ) -> (
+        crate::util::length::PreferredPortion,
+        crate::util::length::PreferredPortion,
+    ) {
         (self.preferred_w, self.preferred_h)
     }
 
@@ -127,7 +324,10 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                     }
                 }
                 // if backspace is pressed then pop the last character
-                sdl2::event::Event::KeyDown { keycode: Some(Keycode::Backspace), ..} => {
+                sdl2::event::Event::KeyDown {
+                    keycode: Some(Keycode::Backspace),
+                    ..
+                } => {
                     if let Some(focus_manager) = &event.focus_manager {
                         if focus_manager.is_focused(self.focus_id) {
                             let mut content = self.text.get();
@@ -146,13 +346,13 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                             self.text.set(content);
                         }
                     }
-                },
+                }
                 _ => {}
             }
         }
         Ok(())
     }
-    
+
     fn draw(&mut self, event: super::widget::WidgetEvent) -> Result<(), String> {
         let position: sdl2::rect::Rect = match event.position.into() {
             Some(v) => v,
@@ -177,7 +377,8 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
         }
 
         let cache = match self.cache.take().filter(|cache| {
-            cache.text_rendered == self.text.get().as_str() && cache.properties_rendered == properties
+            cache.text_rendered == self.text.get().as_str()
+                && cache.properties_rendered == properties
         }) {
             Some(cache) => cache,
             None => {
@@ -201,29 +402,92 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
         // right most content that fits within the aspect ratio
 
         let query = txt.query();
-        if query.height == 0 {
-            return Ok(()); // guard div
+
+        #[derive(Debug)]
+        enum CaretPosition {
+            Left,
+            Right,
+            Other(u32),
         }
 
-        let new_height = position.height() as f32;
-        let scaled_height = new_height / query.height as f32;
-        let new_width = query.width as f32 * scaled_height;
+        // the implementation of SingleLineFontStyle typically gives a 1x1
+        // replacement texture for rendering text of zero length
+        let caret_position = if cache.text_rendered.len() != 0 && query.height != 0 {
+            let new_height = position.height() as f32;
+            let scaler = new_height / query.height as f32; // div is guarded
+            let new_width = query.width as f32 * scaler;
 
-        let new_height = new_height as u32;
-        // truncate, so it doesn't go one pixel off
-        let new_width = new_width as u32;
+            let new_height = new_height as u32;
+            // truncate, so it doesn't go one pixel off
+            let new_width = new_width as u32;
 
-        if new_width <= position.width() {
-            // the text input's width is smaller than where it wants to be drawn
-            // left align the content
-            event.canvas.copy(txt, None, sdl2::rect::Rect::new(position.x, position.y, new_width, new_height))?;
+            let ret = if new_width < position.width() {
+                // the text input's width is smaller than where it wants to be drawn
+                // left align the content
+                event.canvas.copy(
+                    txt,
+                    None,
+                    sdl2::rect::Rect::new(position.x, position.y, new_width, new_height),
+                )?;
+                CaretPosition::Other(new_width)
+            } else {
+                let width_portion = if new_width == 0 {
+                    debug_assert!(false); // can't occur but just in case
+                    0.
+                } else {
+                    position.width() as f32 / new_width as f32
+                };
+                let width_amount = (query.width as f32 * width_portion) as u32;
+
+                // the text input's width is greater than where it wants to be drawn
+                // cut off and only show the rightmost part of it
+                event.canvas.copy(
+                    txt,
+                    sdl2::rect::Rect::new(
+                        (query.width - width_amount)as i32,
+                        0,
+                        width_amount,
+                        query.height,
+                    ),
+                    position,
+                )?;
+                CaretPosition::Right
+            };
+
+            ret
         } else {
-            // the text input's width is greater than where it wants to be drawn
-            // cut off and only show the rightmost part of it
-            event.canvas.copy(txt, sdl2::rect::Rect::new((new_width - position.width()) as i32, 0, query.width, query.height), position)?;
-        }
+            CaretPosition::Left
+        };
 
         self.cache = Some(cache);
+
+        // apply the style
+        let focused = event
+            .focus_manager
+            .map(|f| f.is_focused(self.focus_id))
+            .unwrap_or(false);
+
+        let cache = if focused {
+            &mut self.focused
+        } else {
+            &mut self.not_focused
+        };
+
+        let txt = cache.render(
+            self.style.as_mut(),
+            focused,
+            (position.width(), position.height()),
+            self.text.get(),
+            &self.creator,
+            event.canvas,
+            match caret_position {
+                CaretPosition::Left => 0,
+                CaretPosition::Right => position.width().checked_sub(1).unwrap_or(0),
+                CaretPosition::Other(v) => v,
+            },
+        )?;
+
+        event.canvas.copy(txt, None, Some(position))?;
 
         Ok(())
     }
