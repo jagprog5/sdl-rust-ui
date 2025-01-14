@@ -33,7 +33,9 @@ fn main() -> std::process::ExitCode {
     'running: loop {
         for event in sdl.event_pump.poll_iter() {
             match event {
-                sdl2::event::Event::Quit {..} |
+                sdl2::event::Event::Quit { .. } => {
+                    break 'running;
+                }
                 _ => {
                     events_accumulator.push(SDLEvent::new(event));
                 }

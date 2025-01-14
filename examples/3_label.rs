@@ -146,7 +146,6 @@ fn main() -> std::process::ExitCode {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
             }
-            events_accumulator.clear(); // clear after use
             for e in events_accumulator.iter_mut().filter(|e| e.available()) {
                 match e.e {
                     sdl2::event::Event::KeyDown {
@@ -161,6 +160,7 @@ fn main() -> std::process::ExitCode {
                     _ => {}
                 }
             }
+            events_accumulator.clear(); // clear after use
             sdl.canvas.present();
         }
 

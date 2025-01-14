@@ -23,6 +23,7 @@ pub enum ConsumedStatus {
     ConsumedByLayout,
 }
 
+#[derive(Debug)]
 pub struct SDLEvent {
     pub e: sdl2::event::Event,
     consumed_status: ConsumedStatus,

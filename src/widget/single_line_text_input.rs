@@ -2,7 +2,7 @@ use std::cell::Cell;
 
 use compact_str::CompactString;
 use sdl2::{
-    keyboard::Keycode,
+    keyboard::{Keycode, Mod},
     pixels::{Color, PixelFormatEnum},
     rect::Point,
     render::{Canvas, Texture, TextureCreator},
@@ -52,7 +52,7 @@ pub trait SingleLineTextEditStyle {
         focused: bool,
         text: &str,
         canvas: &mut Canvas<Window>,
-        caret_position: u32,
+        caret_position: f32,
     ) -> Result<(), String>;
 }
 
@@ -71,7 +71,7 @@ impl SingleLineTextEditStyle for DefaultSingleLineEditStyle {
         focused: bool,
         text: &str,
         canvas: &mut Canvas<Window>,
-        caret_position: u32,
+        caret_position: f32,
     ) -> Result<(), String> {
         let _text = text; // todo!
 
@@ -128,7 +128,9 @@ impl SingleLineTextEditStyle for DefaultSingleLineEditStyle {
 
         let caret_position = caret_position as i32;
         let caret_horizontal_spacing = 2;
-        if caret_position > amount_inward + caret_horizontal_spacing && caret_position < size.0 as i32 - 1 - amount_inward - caret_horizontal_spacing {
+        if caret_position > amount_inward + caret_horizontal_spacing
+            && caret_position < size.0 as i32 - 1 - amount_inward - caret_horizontal_spacing
+        {
             // big caret not at beginning or end
             canvas.draw_line(
                 Point::new(caret_position as i32, 0),
@@ -138,8 +140,14 @@ impl SingleLineTextEditStyle for DefaultSingleLineEditStyle {
             // small caret
             let caret_vertical_spacing = 5;
             canvas.draw_line(
-                Point::new(caret_position as i32, amount_inward + 2 + caret_vertical_spacing),
-                Point::new(caret_position as i32, size.1 as i32 - (amount_inward + 3 + caret_vertical_spacing)),
+                Point::new(
+                    caret_position as i32,
+                    amount_inward + 2 + caret_vertical_spacing,
+                ),
+                Point::new(
+                    caret_position as i32,
+                    size.1 as i32 - (amount_inward + 3 + caret_vertical_spacing),
+                ),
             )?;
         }
 
@@ -176,7 +184,7 @@ impl<'sdl> TextureVariantSizeCache<'sdl> {
         text: CompactString,
         creator: &'sdl TextureCreator<WindowContext>,
         canvas: &mut Canvas<Window>,
-        caret_position: u32,
+        caret_position: f32,
     ) -> Result<&'_ Texture<'sdl>, String> {
         let cache = match self.cache.take().filter(|cache| {
             let q = cache.query();
@@ -326,12 +334,17 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                 // if backspace is pressed then pop the last character
                 sdl2::event::Event::KeyDown {
                     keycode: Some(Keycode::Backspace),
+                    keymod,
                     ..
                 } => {
                     if let Some(focus_manager) = &event.focus_manager {
                         if focus_manager.is_focused(self.focus_id) {
                             let mut content = self.text.get();
-                            content.pop();
+                            if keymod.contains(Mod::LCTRLMOD) || keymod.contains(Mod::RCTRLMOD) {
+                                content.clear();
+                            } else {
+                                content.pop();
+                            }
                             self.text.set(content);
                             sdl_event.set_consumed();
                         }
@@ -407,31 +420,36 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
         enum CaretPosition {
             Left,
             Right,
-            Other(u32),
+            Other(f32),
         }
 
         // the implementation of SingleLineFontStyle typically gives a 1x1
         // replacement texture for rendering text of zero length
         let caret_position = if cache.text_rendered.len() != 0 && query.height != 0 {
             let new_height = position.height() as f32;
+
             let scaler = new_height / query.height as f32; // div is guarded
             let new_width = query.width as f32 * scaler;
 
-            let new_height = new_height as u32;
-            // truncate, so it doesn't go one pixel off
-            let new_width = new_width as u32;
-
-            let ret = if new_width < position.width() {
+            let ret = if new_width < position.width() as f32 {
                 // the text input's width is smaller than where it wants to be drawn
                 // left align the content
-                event.canvas.copy(
+
+                // requires copy_f to preserve exact ratio, or else position
+                // will flicker a bit while typing
+                event.canvas.copy_f(
                     txt,
                     None,
-                    sdl2::rect::Rect::new(position.x, position.y, new_width, new_height),
+                    sdl2::rect::FRect::new(
+                        position.x as f32,
+                        position.y as f32,
+                        new_width,
+                        new_height,
+                    ),
                 )?;
                 CaretPosition::Other(new_width)
             } else {
-                let width_portion = if new_width == 0 {
+                let width_portion = if new_width == 0. {
                     debug_assert!(false); // can't occur but just in case
                     0.
                 } else {
@@ -444,7 +462,7 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                 event.canvas.copy(
                     txt,
                     sdl2::rect::Rect::new(
-                        (query.width - width_amount)as i32,
+                        (query.width - width_amount) as i32,
                         0,
                         width_amount,
                         query.height,
@@ -481,8 +499,8 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
             &self.creator,
             event.canvas,
             match caret_position {
-                CaretPosition::Left => 0,
-                CaretPosition::Right => position.width().checked_sub(1).unwrap_or(0),
+                CaretPosition::Left => 0.,
+                CaretPosition::Right => position.width().checked_sub(1).unwrap_or(0) as f32,
                 CaretPosition::Other(v) => v,
             },
         )?;

@@ -6,10 +6,13 @@ use crate::{
     widget::widget::{Widget, WidgetEvent},
 };
 
-use super::vertical_layout::MajorAxisMaxLenPolicy;
+use super::vertical_layout::{direction_conditional_iter_mut, MajorAxisMaxLenPolicy};
 
 pub struct HorizontalLayout<'sdl> {
     pub elems: Vec<&'sdl mut dyn Widget>,
+    /// reverse the order IN TIME that elements are updated and drawn in. this
+    /// does affect the placement of elements in space
+    pub reverse: bool,
     pub preferred_w: PreferredPortion,
     pub preferred_h: PreferredPortion,
     pub min_w_fail_policy: MinLenFailPolicy,
@@ -26,6 +29,7 @@ impl<'sdl> Default for HorizontalLayout<'sdl> {
     fn default() -> Self {
         Self {
             elems: Default::default(),
+            reverse: Default::default(),
             preferred_w: Default::default(),
             preferred_h: Default::default(),
             min_w_fail_policy: Default::default(),
@@ -44,23 +48,16 @@ impl<'sdl> Default for HorizontalLayout<'sdl> {
 macro_rules! impl_widget_fn {
     ($fn_name:ident) => {
         fn $fn_name(&mut self, mut event: WidgetEvent) -> Result<(), String> {
-            let is_pos_non_empty: Option<sdl2::rect::Rect> = event.position.into();
-            if let None = is_pos_non_empty {
-                // even if there is no draw position, still always propagate all
-                // events to all children. consistency
-                for elem in self.elems.iter_mut() {
-                    let mut sub_event = event.sub_event(event.position);
-                    sub_event.aspect_ratio_priority =
-                        crate::util::length::AspectRatioPreferredDirection::HeightFromWidth;
-                    elem.$fn_name(sub_event)?;
-                }
+            if self.elems.len() == 0 {
                 return Ok(());
             }
 
             // collect info from child components
             let mut info: Vec<ChildInfo> = vec![ChildInfo::default(); self.elems.len()];
             let mut sum_preferred_horizontal = PreferredPortion::EMPTY;
-            for (i, elem) in self.elems.iter_mut().enumerate() {
+            for (i, elem) in
+                direction_conditional_iter_mut(&mut self.elems, self.reverse).enumerate()
+            {
                 let (min_w, min_h) = elem.min()?;
                 let (max_w, max_h) = elem.max()?;
                 let (pref_w, pref_h) = elem.preferred_portion();
@@ -79,18 +76,23 @@ macro_rules! impl_widget_fn {
             let mut amount_taken = 0f32;
             let mut amount_given = 0f32;
             for info in info.iter_mut() {
-                info.width = info.preferred_horizontal.weighted_portion(
-                    sum_preferred_horizontal,
-                    event.position.w,
-                );
-                
-                let next_info_width = clamp(info.width, MinLen(info.min_horizontal), MaxLen(info.max_horizontal));
+                info.width = info
+                    .preferred_horizontal
+                    .weighted_portion(sum_preferred_horizontal, event.position.w);
 
-                if info.width < next_info_width { // when clamped, it became larger
+                let next_info_width = clamp(
+                    info.width,
+                    MinLen(info.min_horizontal),
+                    MaxLen(info.max_horizontal),
+                );
+
+                if info.width < next_info_width {
+                    // when clamped, it became larger
                     // it wants to be larger than it currently is
                     // take some len from the other components
                     amount_taken += next_info_width - info.width;
-                } else if info.width > next_info_width { // when clamped, it became smaller
+                } else if info.width > next_info_width {
+                    // when clamped, it became smaller
                     // it wants to be smaller than it currently is
                     // give some len to the other components
                     amount_given += info.width - next_info_width;
@@ -106,29 +108,25 @@ macro_rules! impl_widget_fn {
                 take_deficit(&mut info, deficit);
             }
 
+            if self.elems.len() == 1 {
+                let position = crate::widget::widget::place(
+                    self.elems[0],
+                    event.position,
+                    crate::util::length::AspectRatioPreferredDirection::HeightFromWidth,
+                )?;
+                let mut sub_event = event.sub_event(position);
+                sub_event.aspect_ratio_priority =
+                    crate::util::length::AspectRatioPreferredDirection::HeightFromWidth;
+                self.elems[0].$fn_name(sub_event)?;
+                return Ok(());
+            }
+
             let mut sum_display_width = 0f32;
             for info in info.iter() {
                 sum_display_width += info.width;
             }
 
             let horizontal_space = if sum_display_width < event.position.w {
-                if self.elems.len() == 0 {
-                    return Ok(());
-                }
-
-                if self.elems.len() == 1 {
-                    let position = crate::widget::widget::place(
-                        self.elems[0],
-                        event.position,
-                        crate::util::length::AspectRatioPreferredDirection::HeightFromWidth,
-                    )?;
-                    let mut sub_event = event.sub_event(position);
-                    sub_event.aspect_ratio_priority =
-                        crate::util::length::AspectRatioPreferredDirection::HeightFromWidth;
-                    self.elems[0].$fn_name(sub_event)?;
-                    return Ok(());
-                }
-
                 let extra_space = event.position.w - sum_display_width;
                 debug_assert!(self.elems.len() > 0);
                 let num_spaces = self.elems.len() as u32 - 1;
@@ -140,9 +138,15 @@ macro_rules! impl_widget_fn {
                 0.
             };
 
-            let mut x_pos = event.position.x;
+            let mut x_pos = if self.reverse {
+                event.position.x + event.position.w
+            } else {
+                event.position.x
+            };
             let mut e_err_accumulation = 0f32;
-            for (elem, info) in self.elems.iter_mut().zip(info.iter_mut()) {
+            for (elem, info) in
+                direction_conditional_iter_mut(&mut self.elems, self.reverse).zip(info.iter_mut())
+            {
                 // handle accumulation of errors. this is needed for things to look pixel perfect with many children
                 e_err_accumulation += info.width - info.width.floor();
                 info.width = info.width.floor();
@@ -150,6 +154,10 @@ macro_rules! impl_widget_fn {
                 if e_err_accumulation >= 0.5 {
                     info.width += 1.;
                     e_err_accumulation -= 1.;
+                }
+                if self.reverse {
+                    x_pos -= info.width;
+                    x_pos -= horizontal_space as f32;
                 }
                 let pre_clamp_height = info.preferred_vertical.get(event.position.h);
                 let mut height = clamp(pre_clamp_height, info.min_vertical, info.max_vertical);
@@ -170,12 +178,19 @@ macro_rules! impl_widget_fn {
                     elem.max_h_fail_policy(),
                 ) + event.position.y;
 
-                let mut sub_event = event.sub_event(crate::util::rect::FRect {x: x_pos, y, w: info.width, h: height});
+                let mut sub_event = event.sub_event(crate::util::rect::FRect {
+                    x: x_pos,
+                    y,
+                    w: info.width,
+                    h: height,
+                });
                 sub_event.aspect_ratio_priority =
                     crate::util::length::AspectRatioPreferredDirection::HeightFromWidth;
                 elem.$fn_name(sub_event)?;
-                x_pos += info.width;
-                x_pos += horizontal_space as f32;
+                if !self.reverse {
+                    x_pos += info.width;
+                    x_pos += horizontal_space as f32;
+                }
             }
             Ok(())
         }

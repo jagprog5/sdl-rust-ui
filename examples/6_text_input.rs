@@ -56,6 +56,11 @@ fn main() -> std::process::ExitCode {
     ));
 
     let mut layout = VerticalLayout::default();
+    // update order should be reversed, as the multiline label widget relies on
+    // the changes from the text input.
+    //
+    // doesn't really matter for this example
+    layout.reverse = true;
     layout.min_w_fail_policy = MinLenFailPolicy::NEGATIVE;
 
     let multiline_text = Cell::new("content will be displayed here".to_owned());

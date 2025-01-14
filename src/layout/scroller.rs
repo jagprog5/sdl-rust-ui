@@ -399,16 +399,11 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
             h: position_for_contained.h,
         };
 
-        event.position.x += scroll_x as f32;
-        event.position.y += scroll_y as f32;
-
         let update_result = self
             .contained
             .update(event.sub_event(position_for_contained_shifted));
 
         event.canvas.set_clip_rect(previous_clipping_rect); // restore
-        event.position.x -= scroll_x as f32;
-        event.position.y -= scroll_y as f32;
 
         // handle mouse wheel. happens after update, as it allows contained
         // to consume it first (for example, with nested scrolls)
