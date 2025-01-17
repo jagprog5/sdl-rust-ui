@@ -1,17 +1,14 @@
-use crate::util::focus::FocusID;
+use sdl2::render::TextureCreator;
+use sdl2::video::WindowContext;
+
+use crate::util::focus::RefCircularUIDCell;
 use crate::util::length::{MaxLen, MinLen};
 
 use super::checkbox::{TextureVariantSizeCache, TextureVariantStyle};
-use super::single_line_label::SingleLineLabel;
 use super::widget::{Widget, WidgetEvent};
 
-use sdl2::pixels::Color;
-
-use sdl2::{
-    rect::Point,
-    render::{Canvas, TextureCreator},
-    video::{Window, WindowContext},
-};
+#[cfg(feature = "sdl2-ttf")]
+use super::single_line_label::SingleLineLabel;
 
 #[derive(Clone, Copy)]
 pub enum ButtonTextureVariant {
@@ -21,6 +18,7 @@ pub enum ButtonTextureVariant {
 }
 
 /// a default provided check box style
+#[cfg(feature = "sdl2-ttf")]
 pub struct DefaultButtonStyle<'sdl, 'state> {
     pub label: SingleLineLabel<'sdl, 'state>,
 }
@@ -33,6 +31,7 @@ pub trait ButtonStyle<TVariant>: TextureVariantStyle<TVariant> {
     fn as_mut_texture_variant_style(&mut self) -> &mut dyn TextureVariantStyle<TVariant>;
 }
 
+#[cfg(feature = "sdl2-ttf")]
 impl<'sdl, 'state> ButtonStyle<ButtonTextureVariant> for DefaultButtonStyle<'sdl, 'state> {
     fn as_mut_widget(&mut self) -> &mut dyn Widget {
         &mut self.label
@@ -49,11 +48,12 @@ impl<'sdl, 'state> ButtonStyle<ButtonTextureVariant> for DefaultButtonStyle<'sdl
     }
 }
 
+#[cfg(feature = "sdl2-ttf")]
 impl<'sdl, 'state> TextureVariantStyle<ButtonTextureVariant> for DefaultButtonStyle<'sdl, 'state> {
     fn draw(
         &mut self,
         variant: ButtonTextureVariant,
-        canvas: &mut Canvas<Window>,
+        canvas: &mut sdl2::render::Canvas<sdl2::video::Window>,
     ) -> Result<(), String> {
         let size = canvas.output_size().map_err(|e| e.to_string())?;
 
@@ -64,35 +64,35 @@ impl<'sdl, 'state> TextureVariantStyle<ButtonTextureVariant> for DefaultButtonSt
         }
 
         let color = match variant {
-            ButtonTextureVariant::Idle => Color::RGB(50, 50, 50),
-            ButtonTextureVariant::Focused => Color::RGB(118, 73, 206),
-            ButtonTextureVariant::FocusedPressed => Color::RGB(200, 200, 200),
+            ButtonTextureVariant::Idle => sdl2::pixels::Color::RGB(50, 50, 50),
+            ButtonTextureVariant::Focused => sdl2::pixels::Color::RGB(118, 73, 206),
+            ButtonTextureVariant::FocusedPressed => sdl2::pixels::Color::RGB(200, 200, 200),
         };
 
         canvas.set_draw_color(color);
 
         let top_left_points = [
-            Point::new(amount_inward, 0),
-            Point::new(0, 0),
-            Point::new(0, amount_inward),
+            sdl2::rect::Point::new(amount_inward, 0),
+            sdl2::rect::Point::new(0, 0),
+            sdl2::rect::Point::new(0, amount_inward),
         ];
 
         let bottom_left_points = [
-            Point::new(amount_inward, size.1 as i32 - 1),
-            Point::new(0, size.1 as i32 - 1),
-            Point::new(0, size.1 as i32 - 1 - amount_inward),
+            sdl2::rect::Point::new(amount_inward, size.1 as i32 - 1),
+            sdl2::rect::Point::new(0, size.1 as i32 - 1),
+            sdl2::rect::Point::new(0, size.1 as i32 - 1 - amount_inward),
         ];
 
         let top_right_points = [
-            Point::new(size.0 as i32 - 1 - amount_inward, 0),
-            Point::new(size.0 as i32 - 1, 0),
-            Point::new(size.0 as i32 - 1, amount_inward),
+            sdl2::rect::Point::new(size.0 as i32 - 1 - amount_inward, 0),
+            sdl2::rect::Point::new(size.0 as i32 - 1, 0),
+            sdl2::rect::Point::new(size.0 as i32 - 1, amount_inward),
         ];
 
         let bottom_right_points = [
-            Point::new(size.0 as i32 - 1 - amount_inward, size.1 as i32 - 1),
-            Point::new(size.0 as i32 - 1, size.1 as i32 - 1),
-            Point::new(size.0 as i32 - 1, size.1 as i32 - 1 - amount_inward),
+            sdl2::rect::Point::new(size.0 as i32 - 1 - amount_inward, size.1 as i32 - 1),
+            sdl2::rect::Point::new(size.0 as i32 - 1, size.1 as i32 - 1),
+            sdl2::rect::Point::new(size.0 as i32 - 1, size.1 as i32 - 1 - amount_inward),
         ];
 
         let all_points = [
@@ -136,8 +136,11 @@ impl<'sdl, 'state> TextureVariantStyle<ButtonTextureVariant> for DefaultButtonSt
 
 pub struct Button<'sdl, 'state> {
     pub functionality: Box<dyn FnMut() -> Result<(), String> + 'state>,
-    pub focus_id: FocusID,
-    pressed: bool, // internal state for drawing
+    pub focus_id: RefCircularUIDCell<'sdl>,
+    /// internal state for drawing
+    pressed: bool,
+    /// hovered is only used if no focus manager is available
+    hovered: bool,
 
     style: Box<dyn ButtonStyle<ButtonTextureVariant> + 'sdl>,
     creator: &'sdl TextureCreator<WindowContext>,
@@ -149,7 +152,7 @@ pub struct Button<'sdl, 'state> {
 impl<'sdl, 'state> Button<'sdl, 'state> {
     pub fn new(
         functionality: Box<dyn FnMut() -> Result<(), String> + 'state>,
-        focus_id: FocusID,
+        focus_id: RefCircularUIDCell<'sdl>,
         style: Box<dyn ButtonStyle<ButtonTextureVariant> + 'sdl>,
         creator: &'sdl TextureCreator<WindowContext>,
     ) -> Self {
@@ -157,6 +160,7 @@ impl<'sdl, 'state> Button<'sdl, 'state> {
             functionality,
             focus_id,
             pressed: false,
+            hovered: false,
             style,
             creator,
             idle: Default::default(),
@@ -222,8 +226,9 @@ impl<'sdl, 'state> Widget for Button<'sdl, 'state> {
     fn update(&mut self, event: WidgetEvent) -> Result<(), String> {
         let fun: &mut dyn FnMut() -> Result<(), String> = &mut self.functionality;
         super::checkbox::focus_press_update_implementation(
+            &mut self.hovered,
             &mut self.pressed,
-            self.focus_id,
+            self.focus_id.0.get(),
             event,
             fun,
         )
@@ -239,11 +244,11 @@ impl<'sdl, 'state> Widget for Button<'sdl, 'state> {
 
         let focused = event
             .focus_manager
-            .map(|f| f.is_focused(self.focus_id))
+            .map(|f| f.is_focused(self.focus_id.uid()))
             .unwrap_or(false);
         let pressed = self.pressed;
 
-        let variant = if focused {
+        let variant = if focused || self.hovered {
             if pressed {
                 ButtonTextureVariant::FocusedPressed
             } else {

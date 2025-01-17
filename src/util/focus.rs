@@ -1,139 +1,242 @@
-use sdl2::keyboard::{Keycode, Mod};
+use sdl2::{keyboard::{Keycode, Mod}, render::ClippingRect};
 
-use crate::widget::widget::{SDLEvent, WidgetEvent};
+use crate::widget::widget::SDLEvent;
 
-#[derive(Clone, Copy)]
-pub struct FocusID(u64);
+use std::{
+    cell::Cell, sync::atomic::{AtomicU64, Ordering}, time::Instant
+};
 
-/// a widget can be the current focus. how a widget handles that means is up to
-/// it. only zero or one widgets can be focused at a time.
-pub struct FocusManager {
-    /// increments upward to get new unique ids for each widget
-    next_available: u64,
-    /// the id of the widget that is currently focused
-    current_focus: Option<u64>,
+
+/// 8 pseudo-random bytes. provide a source of randomness
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct PRNGBytes(pub [u8; 8]);
+
+/// like a uuid, but not unique between machines; no form of mac or node id
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct UID {
+    /// monotonic in time
+    inst: Instant,
+    /// monotonic counter
+    count: u64,
+    prng_bytes: PRNGBytes,
+}
+
+static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+impl UID {
+    /// create a uid, with some supplied random bytes
+    ///
+    /// if lazy, provide zeros
+    pub fn new(prng_bytes: PRNGBytes) -> Self {
+        let now = Instant::now();
+        let count = COUNTER.fetch_add(1, Ordering::Relaxed); // overflows
+        Self {
+            inst: now,
+            count,
+            prng_bytes,
+        }
+    }
+}
+
+/// the focus IDs form a circular doubly linked list via UIDs. if elements are
+/// added or removed from the ui then the next and previous UIDs should be kept
+/// in sync (if they are not, then it's treated like being unfocused when
+/// transitioning to a non existent UID)
+#[derive(Debug, Clone, Copy)]
+pub struct CircularUID {
+    uid: UID,
+    /// the uid that comes after this one
+    next_uid: Option<UID>,
+    /// the uid that comes before this one
+    previous_uid: Option<UID>,
+}
+
+impl CircularUID {
+    pub fn new(uid: UID) -> Self {
+        Self {
+            uid,
+            next_uid: None,
+            previous_uid: None,
+        }
+    }
+
+    pub fn uid(&self) -> UID {
+        self.uid
+    }
+
+    pub fn next(&self) -> Option<UID> {
+        self.next_uid
+    }
+
+    pub fn previous(&self) -> Option<UID> {
+        self.previous_uid
+    }
+
+    /// set this to be after the other. also modifies other to be before this
+    pub fn set_after(&mut self, other: &mut CircularUID) -> &mut CircularUID {
+        self.previous_uid = Some(other.uid());
+        other.next_uid = Some(self.uid());
+        self
+    }
+
+    /// set this to be before the other. also modifies other to be after this
+    pub fn set_before(&mut self, other: &mut CircularUID) -> &mut CircularUID {
+        self.next_uid = Some(other.uid());
+        other.previous_uid = Some(self.uid());
+        self
+    }
+
+    /// sets this UID as before and after itself
+    pub fn single_id_loop(&mut self) -> &mut CircularUID {
+        self.previous_uid = Some(self.uid());
+        self.next_uid = Some(self.uid());
+        self
+    }
+}
+
+/// exact same as CircularUID but an interior mutability reference wrapper
+#[derive(Debug, Clone, Copy)]
+pub struct RefCircularUIDCell<'a>(pub &'a Cell<CircularUID>);
+
+impl<'a> RefCircularUIDCell<'a> {
+    pub fn uid(&self) -> UID {
+        self.0.get().uid()
+    }
+    
+    pub fn next(&self) -> Option<UID> {
+        self.0.get().next()
+    }
+
+    pub fn previous(&self) -> Option<UID> {
+        self.0.get().previous()
+    }
+
+    pub fn set_after(&self, other: &RefCircularUIDCell) -> &Self {
+        let mut me = self.0.get();
+        let mut o = other.0.get();
+        me.set_after(&mut o);
+        self.0.set(me);
+        other.0.set(o);
+        self
+    }
+
+    pub fn set_before(&self, other: &RefCircularUIDCell) -> &Self {
+        let mut me = self.0.get();
+        let mut o = other.0.get();
+        me.set_after(&mut o);
+        self.0.set(me);
+        other.0.set(o);
+        self
+    }
+
+    pub fn single_id_loop(&self) -> &Self {
+        let mut me = self.0.get();
+        me.single_id_loop();
+        self.0.set(me);
+        self
+    }
+}
+
+/// a widget can be the current focus. how a widget handles what that means is
+/// up to it. only zero or one widgets should be focused at a time.
+pub struct FocusManager(pub Option<UID>);
+
+impl Default for FocusManager {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+pub(crate) fn point_in_position_and_clipping_rect(x: i32, y: i32, position: sdl2::rect::Rect, clipping_rect: ClippingRect) -> bool {
+    if position.contains_point((x, y)) {
+        // ignore mouse events out of scroll area and position
+        let point_contained_in_clipping_rect = match clipping_rect {
+            sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
+            sdl2::render::ClippingRect::Zero => false,
+            sdl2::render::ClippingRect::None => true,
+        };
+
+        if point_contained_in_clipping_rect {
+            return true;
+        }
+    }
+    false
+}
+
+pub struct WidgetEventFocusSubset<'sdl> {
+    /// subset of WidgetEvent that has Some focus_manager
+    pub focus_manager: &'sdl mut FocusManager,
+    pub position: super::rect::FRect,
+    /// a single event. the intent is that this would be inline with the
+    /// existing processing loop - for consistent order of operations each
+    /// element should be fully processed before moving to the next element
+    pub event: &'sdl mut SDLEvent,
+    pub canvas: &'sdl mut sdl2::render::WindowCanvas,
 }
 
 impl FocusManager {
-    /// clear entire state of the focus manager
-    pub fn clear(&mut self) {
-        self.next_available = 0;
-        self.current_focus = None;
-    }
-
-    pub fn next_available_id(&mut self) -> FocusID {
-        let ret = FocusID(self.next_available);
-        self.next_available += 1;
-        ret
-    }
-
-    pub fn is_focused(&self, id: FocusID) -> bool {
-        match self.current_focus {
-            Some(v) => id.0 == v,
-            None => false,
-        }
-    }
-
-    pub fn set_focus(&mut self, id: FocusID) {
-        self.current_focus = Some(id.0);
-    }
-
-    pub fn unfocus(&mut self) {
-        self.current_focus = None;
-    }
-
-    pub fn set_next_focused(&mut self) {
-        self.current_focus = Some(match self.current_focus {
-            None => 0, // start at first
-            Some(mut v) => {
-                // go to next, wrapping back to 0
-                v += 1;
-                if v >= self.next_available {
-                    v = 0;
-                }
-                v
-            }
-        });
-    }
-
-    pub fn set_previous_focused(&mut self) {
-        let last = self.next_available.checked_sub(1).unwrap_or(0);
-        self.current_focus = Some(match self.current_focus {
-            None => last,
-            Some(v) => v.checked_sub(1).unwrap_or(last),
-        });
+    pub fn is_focused(&self, other: UID) -> bool {
+        self.0.map(|uid| uid == other).unwrap_or(false)
     }
 
     /// handle default behavior for how focus should change given the events:
-    /// - tab goes to next, shift + tab goes to previous
     /// - mouse moved over widget gains focus
-    /// - escape key causes unfocus
-    ///
-    /// this function may consume tab and escape key events
-    pub fn default_widget_focus_behavior(my_focus_id: FocusID, event: &mut WidgetEvent) {
-        let focus_manager = match &mut event.focus_manager {
-            Some(v) => v,
-            None => return,
-        };
-        for sdl_input in event.events.iter_mut().filter(|e| e.available()) {
-            match sdl_input.e {
-                sdl2::event::Event::MouseMotion { x, y, .. } => {
-                    let position: Option<sdl2::rect::Rect> = event.position.into();
-                    if let Some(position) = position {
-                        let point_contained_in_clipping_rect = match event.canvas.clip_rect() {
-                            sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
-                            sdl2::render::ClippingRect::Zero => false,
-                            sdl2::render::ClippingRect::None => true,
-                        };
-                        // ignore mouse events out of position bounds and
-                        // out of scroll area clipping rect
-                        if position.contains_point((x, y)) && point_contained_in_clipping_rect {
-                            focus_manager.set_focus(my_focus_id);
-                        }
-                    }
+    /// - if focused:
+    ///     - tab goes to next, shift + tab goes to previous (consumes events)
+    ///     - escape key causes unfocus (consumes event)
+    pub fn default_widget_focus_behavior(my_focus_id: CircularUID, event: WidgetEventFocusSubset) {
+        match event.event.e {
+            // keys:
+            // - only applicable if currently focused
+            // - consume key event once used
+            sdl2::event::Event::KeyDown {
+                repeat: false,
+                keycode: Some(Keycode::Tab),
+                keymod,
+                ..
+            } => {
+                if !event.focus_manager.is_focused(my_focus_id.uid()) {
+                    return; // only process tab if I am focused
                 }
-                sdl2::event::Event::KeyDown {
-                    repeat: false,
-                    keycode: Some(Keycode::Tab),
-                    keymod,
-                    ..
-                } => {
-                    if !focus_manager.is_focused(my_focus_id) {
-                        continue; // only process tab if I am focused
-                    }
-                    sdl_input.set_consumed();
-                    if keymod.contains(Mod::LSHIFTMOD) || keymod.contains(Mod::RSHIFTMOD) {
-                        // shift tab was pressed
-                        focus_manager.set_previous_focused();
-                    } else {
-                        // tab was pressed
-                        focus_manager.set_next_focused();
-                    }
+                event.event.set_consumed();
+                if keymod.contains(Mod::LSHIFTMOD) || keymod.contains(Mod::RSHIFTMOD) {
+                    // shift tab was pressed
+                    event.focus_manager.0 = my_focus_id.previous_uid;
+                } else {
+                    // tab was pressed
+                    event.focus_manager.0 = my_focus_id.next_uid;
                 }
-                sdl2::event::Event::KeyDown {
-                    repeat: false,
-                    keycode: Some(Keycode::ESCAPE),
-                    ..
-                } => {
-                    if !focus_manager.is_focused(my_focus_id) {
-                        continue; // only process escape if I am focused
-                    }
-                    sdl_input.set_consumed();
-                    focus_manager.unfocus();
-                }
-                _ => {}
             }
+            sdl2::event::Event::KeyDown {
+                repeat: false,
+                keycode: Some(Keycode::ESCAPE),
+                ..
+            } => {
+                if !event.focus_manager.is_focused(my_focus_id.uid()) {
+                    return; // only process escape if I am focused
+                }
+                event.event.set_consumed();
+                event.focus_manager.0 = None; // unfocus
+            }
+            sdl2::event::Event::MouseMotion { x, y, .. } => {
+                let position: Option<sdl2::rect::Rect> = event.position.into();
+                if let Some(position) = position {
+                    if point_in_position_and_clipping_rect(x, y, position, event.canvas.clip_rect()) {
+                        // even if not focused, if mouse is moved over
+                        // widget then set focus to that widget
+                        //
+                        // generally never consume mouse motion events
+                        event.focus_manager.0 = Some(my_focus_id.uid());
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
-    /// how should the focus manager itself handle focus, irrespective of any
-    /// focusable widgets
-    ///
-    /// this will consume tab events
-    pub fn default_start_focus_behavior(&mut self, events: &mut [SDLEvent]) {
-        if let Some(_) = self.current_focus {
-            return; // only applicable if nothing has the focus right now
-        }
+    /// if tab or shift tab has not been consumed by any widget, then set the
+    /// focus to the first or last widget, respectively
+    pub fn default_start_focus_behavior(&mut self, events: &mut [SDLEvent], start_widget_focus_id: UID, end_widget_focus_id: UID) {
         for sdl_input in events.iter_mut().filter(|e| e.available()) {
             match sdl_input.e {
                 sdl2::event::Event::KeyDown {
@@ -145,23 +248,14 @@ impl FocusManager {
                     sdl_input.set_consumed();
                     if keymod.contains(Mod::LSHIFTMOD) || keymod.contains(Mod::RSHIFTMOD) {
                         // shift tab was pressed
-                        self.set_previous_focused();
+                        self.0 = Some(end_widget_focus_id);
                     } else {
                         // tab was pressed
-                        self.set_next_focused();
+                        self.0 = Some(start_widget_focus_id);
                     }
                 }
                 _ => {}
             }
-        }
-    }
-}
-
-impl Default for FocusManager {
-    fn default() -> Self {
-        Self {
-            next_available: Default::default(),
-            current_focus: Default::default(),
         }
     }
 }

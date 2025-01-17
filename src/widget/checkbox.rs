@@ -1,12 +1,20 @@
 use std::cell::Cell;
 
 use sdl2::{
-    keyboard::Keycode, mouse::MouseButton, pixels::{Color, PixelFormatEnum}, rect::Point, render::{Canvas, Texture, TextureCreator}, video::{Window, WindowContext}
+    keyboard::{Keycode, Mod},
+    mouse::MouseButton,
+    pixels::{Color, PixelFormatEnum},
+    rect::Point,
+    render::{Canvas, Texture, TextureCreator},
+    video::{Window, WindowContext},
 };
 
 use crate::util::{
-    focus::{FocusID, FocusManager},
+    focus::{
+        point_in_position_and_clipping_rect, CircularUID, RefCircularUIDCell, FocusManager, WidgetEventFocusSubset
+    },
     length::{MaxLen, MinLen},
+    rust::reborrow,
 };
 
 use super::widget::{Widget, WidgetEvent};
@@ -67,7 +75,7 @@ pub struct DefaultCheckBoxStyle {}
 
 impl Default for DefaultCheckBoxStyle {
     fn default() -> Self {
-        Self {  }
+        Self {}
     }
 }
 
@@ -255,12 +263,15 @@ impl<'sdl, TVariant> TextureVariantSizeCache<'sdl, TVariant> {
 
 pub struct CheckBox<'sdl, 'state> {
     pub checked: &'state Cell<bool>,
-    pub focus_id: FocusID,
+    pub focus_id: RefCircularUIDCell<'sdl>,
+    /// internal state for drawing
     pressed: bool,
+    /// hovered is only used if no focus manager is available
+    hovered: bool,
 
     pub size: f32,
     creator: &'sdl TextureCreator<WindowContext>,
-    
+
     style: Box<dyn TextureVariantStyle<CheckBoxTextureVariant> + 'sdl>,
     idle: TextureVariantSizeCache<'sdl, CheckBoxTextureVariant>,
     focused: TextureVariantSizeCache<'sdl, CheckBoxTextureVariant>,
@@ -274,7 +285,7 @@ pub struct CheckBox<'sdl, 'state> {
 impl<'sdl, 'state> CheckBox<'sdl, 'state> {
     pub fn new(
         checked: &'state Cell<bool>,
-        focus_id: FocusID,
+        focus_id: RefCircularUIDCell<'sdl>,
         style: Box<dyn TextureVariantStyle<CheckBoxTextureVariant> + 'sdl>,
         creator: &'sdl TextureCreator<WindowContext>,
     ) -> Self {
@@ -282,6 +293,7 @@ impl<'sdl, 'state> CheckBox<'sdl, 'state> {
             checked,
             focus_id,
             pressed: false,
+            hovered: false,
             style,
             size: 30.,
             creator,
@@ -296,35 +308,67 @@ impl<'sdl, 'state> CheckBox<'sdl, 'state> {
     }
 }
 
-/// update fn implementation for something which can be focused and pressed
+/// update implementation for something which can be focused and pressed
 pub(crate) fn focus_press_update_implementation<T>(
+    hovered: &mut bool,
     pressed: &mut bool,
-    focus_id: FocusID,
+    focus_id: CircularUID,
     mut event: WidgetEvent,
     functionality: &mut T,
 ) -> Result<(), String>
 where
     T: FnMut() -> Result<(), String> + ?Sized,
 {
-    FocusManager::default_widget_focus_behavior(focus_id, &mut event);
-    let position: sdl2::rect::Rect = match event.position.into() {
-        Some(v) => v,
-        // the rest of this is just for drawing or being clicked, both
-        // require non-zero area position
-        None => return Ok(()),
-    };
-
     // value updated each frame
+    *hovered = false;
     *pressed = false;
 
     for sdl_event in event.events.iter_mut().filter(|e| e.available()) {
+        if let Some(focus_manager) = reborrow(&mut event.focus_manager) {
+            FocusManager::default_widget_focus_behavior(
+                focus_id,
+                WidgetEventFocusSubset {
+                    focus_manager,
+                    position: event.position,
+                    event: sdl_event,
+                    canvas: event.canvas,
+                },
+            );
+        }
+        if sdl_event.consumed() {
+            continue; // consumed as a result of default_widget_focus_behavior
+        }
+
         match sdl_event.e {
+            // keys:
+            // - only applicable if currently focused
+            // - consume key event once used
+            sdl2::event::Event::KeyDown {
+                repeat: false,
+                keycode: Some(Keycode::Tab),
+                keymod,
+                ..
+            } => {
+                // tab and shift tab go to next, previous widget respectively.
+                // only if this current widget is focused. and consume the event
+                if let Some(focus_manager) = reborrow(&mut event.focus_manager) {
+                    if focus_manager.is_focused(focus_id.uid()) {
+                        sdl_event.set_consumed();
+                        if keymod.contains(Mod::LSHIFTMOD) || keymod.contains(Mod::RSHIFTMOD) {
+                            focus_manager.0 = focus_id.previous();
+                        } else {
+                            focus_manager.0 = focus_id.next();
+                        }
+                    }
+                }
+            }
             sdl2::event::Event::KeyDown {
                 keycode: Some(Keycode::Return),
                 ..
             } => {
-                if let Some(focus_manager) = &event.focus_manager {
-                    if focus_manager.is_focused(focus_id) {
+                // enter key pressed down. only if currently focused
+                if let Some(focus_manager) = reborrow(&mut event.focus_manager) {
+                    if focus_manager.is_focused(focus_id.uid()) {
                         *pressed = true;
                         sdl_event.set_consumed();
                     }
@@ -335,33 +379,42 @@ where
                 keycode: Some(Keycode::Return),
                 ..
             } => {
-                if let Some(focus_manager) = &event.focus_manager {
-                    if focus_manager.is_focused(focus_id) {
+                // enter key released. only if currently focused.
+                if let Some(focus_manager) = reborrow(&mut event.focus_manager) {
+                    if focus_manager.is_focused(focus_id.uid()) {
+                        sdl_event.set_consumed(); // consume before trying functionality
                         match functionality() {
                             Ok(()) => (),
                             Err(e) => return Err(e),
                         };
-                        sdl_event.set_consumed();
                     }
                 }
             }
+            // mouse:
+            // - consume mouse down and up (but not mouse motion)
+            // - doesn't check if currently focused (mouse over widget + events
+            //   haven't been consumed is good enough)
+            // - sets focus to current widget when consumed
             sdl2::event::Event::MouseMotion {
                 mousestate, x, y, ..
             } => {
-                if !mousestate.left() {
-                    continue;
-                }
-                if position.contains_point((x, y)) {
-                    // ignore mouse events out of scroll area
-                    let point_contained_in_clipping_rect = match event.canvas.clip_rect() {
-                        sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
-                        sdl2::render::ClippingRect::Zero => false,
-                        sdl2::render::ClippingRect::None => true,
-                    };
-                    if !point_contained_in_clipping_rect {
-                        continue;
+                let position: Option<sdl2::rect::Rect> = event.position.into();
+                if let Some(position) = position {
+                    if point_in_position_and_clipping_rect(x, y, position, event.canvas.clip_rect())
+                    {
+                        *hovered = true;
+                        if !mousestate.left() {
+                            continue;
+                        }
+                        // the mouse was moved over the widget AND the left
+                        // button is pressed
+                        //
+                        // generally never consume mouse motion events
+                        *pressed = true;
+                        if let Some(focus_manager) = reborrow(&mut event.focus_manager) {
+                            focus_manager.0 = Some(focus_id.uid());
+                        }
                     }
-                    *pressed = true;
                 }
             }
             sdl2::event::Event::MouseButtonDown {
@@ -370,24 +423,18 @@ where
                 y,
                 ..
             } => {
-                // ok even if not focused (button click works even if no
-                // focus manager is used at all)
-                if position.contains_point((x, y)) {
-                    // ignore mouse events out of scroll area
-                    let point_contained_in_clipping_rect = match event.canvas.clip_rect() {
-                        sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
-                        sdl2::render::ClippingRect::Zero => false,
-                        sdl2::render::ClippingRect::None => true,
-                    };
-                    if !point_contained_in_clipping_rect {
-                        continue;
+                let position: Option<sdl2::rect::Rect> = event.position.into();
+                if let Some(position) = position {
+                    if point_in_position_and_clipping_rect(x, y, position, event.canvas.clip_rect())
+                    {
+                        // the left mouse button was pressed on this widget
+                        *pressed = true;
+                        *hovered = true;
+                        sdl_event.set_consumed();
+                        if let Some(focus_manager) = reborrow(&mut event.focus_manager) {
+                            focus_manager.0 = Some(focus_id.uid());
+                        }
                     }
-
-                    sdl_event.set_consumed();
-                    if let Some(focus_manager) = &mut event.focus_manager {
-                        focus_manager.set_focus(focus_id);
-                    }
-                    *pressed = true;
                 }
             }
             sdl2::event::Event::MouseButtonUp {
@@ -398,22 +445,21 @@ where
             } => {
                 // ok even if not focused (button click works even if no
                 // focus manager is used at all)
-                if position.contains_point((x, y)) {
-                    // ignore mouse events out of scroll area
-                    let point_contained_in_clipping_rect = match event.canvas.clip_rect() {
-                        sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
-                        sdl2::render::ClippingRect::Zero => false,
-                        sdl2::render::ClippingRect::None => true,
-                    };
-                    if !point_contained_in_clipping_rect {
-                        continue;
+                let position: Option<sdl2::rect::Rect> = event.position.into();
+                if let Some(position) = position {
+                    if point_in_position_and_clipping_rect(x, y, position, event.canvas.clip_rect())
+                    {
+                        *pressed = false;
+                        *hovered = true;
+                        sdl_event.set_consumed();
+                        if let Some(focus_manager) = reborrow(&mut event.focus_manager) {
+                            focus_manager.0 = Some(focus_id.uid());
+                        }
+                        match functionality() {
+                            Ok(()) => (),
+                            Err(e) => return Err(e),
+                        };
                     }
-
-                    match functionality() {
-                        Ok(()) => (),
-                        Err(e) => return Err(e),
-                    };
-                    sdl_event.set_consumed();
                 }
             }
             _ => {}
@@ -432,12 +478,18 @@ impl<'sdl, 'state> Widget for CheckBox<'sdl, 'state> {
     }
 
     fn update(&mut self, event: WidgetEvent) -> Result<(), String> {
-        focus_press_update_implementation(&mut self.pressed, self.focus_id, event, &mut || {
-            let v = self.checked.get();
-            let v = !v;
-            self.checked.set(v);
-            Ok(())
-        })
+        focus_press_update_implementation(
+            &mut self.hovered,
+            &mut self.pressed,
+            self.focus_id.0.get(),
+            event,
+            &mut || {
+                let v = self.checked.get();
+                let v = !v;
+                self.checked.set(v);
+                Ok(())
+            },
+        )
     }
 
     fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
@@ -450,13 +502,11 @@ impl<'sdl, 'state> Widget for CheckBox<'sdl, 'state> {
 
         let focused = event
             .focus_manager
-            .map(|f| f.is_focused(self.focus_id))
+            .map(|f| f.is_focused(self.focus_id.uid()))
             .unwrap_or(false);
         let checked = self.checked.get();
-        let pressed = self.pressed;
-
-        let variant = if focused {
-            if pressed {
+        let variant = if focused || self.hovered {
+            if self.pressed {
                 if checked {
                     CheckBoxTextureVariant::FocusedPressedChecked
                 } else {
@@ -471,7 +521,7 @@ impl<'sdl, 'state> Widget for CheckBox<'sdl, 'state> {
             }
         } else {
             if checked {
-                if pressed {
+                if self.pressed {
                     CheckBoxTextureVariant::CheckedPressed
                 } else {
                     CheckBoxTextureVariant::Checked

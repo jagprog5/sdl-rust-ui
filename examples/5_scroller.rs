@@ -1,11 +1,12 @@
 use std::cell::Cell;
 
+use rand::Rng;
 use sdl2::pixels::Color;
 use tiny_sdl2_gui::{
     layout::scroller::{Scroller, ScrollerSizingPolicy},
-    util::{focus::FocusManager, length::PreferredPortion},
+    util::{focus::{CircularUID, RefCircularUIDCell, FocusManager, PRNGBytes, UID}, length::PreferredPortion},
     widget::{
-        background::{BackgroundSizingPolicy, Smooth, SoftwareRenderBackground, SolidColorBackground},
+        background::{BackgroundSizingPolicy, SoftwareRenderBackground, SolidColorBackground},
         border::{Bevel, Border, Empty, Gradient, Line},
         checkbox::{CheckBox, DefaultCheckBoxStyle},
         debug::CustomSizingControl,
@@ -26,17 +27,40 @@ fn main() -> std::process::ExitCode {
 
     let checkbox_state = Cell::new(false);
 
-    // there is a checkbox
-    let mut checkbox0 = CheckBox::new(
+    let mut rng = rand::thread_rng();
+
+    let mut get_prng_bytes = || {
+        let mut bytes = [0u8; 8];
+        rng.fill(&mut bytes);
+        PRNGBytes(bytes)
+    };
+
+    let checkbox_focus_id = get_prng_bytes();
+    let checkbox_focus_id = UID::new(checkbox_focus_id);
+    let checkbox_focus_id = CircularUID::new(checkbox_focus_id);
+    let checkbox_focus_id = Cell::new(checkbox_focus_id);
+    let checkbox_focus_id = RefCircularUIDCell(&checkbox_focus_id);
+    let mut checkbox = CheckBox::new(
         &checkbox_state,
-        focus_manager.next_available_id(),
-        Box::new(DefaultCheckBoxStyle::default()),
+        checkbox_focus_id,
+        Box::new(DefaultCheckBoxStyle {}),
         &sdl.texture_creator,
     );
+    checkbox.focus_id.single_id_loop();
+
+    // there is a checkbox. it is the only element
+    // let checkbox_focus_id = UID::new(get_prng_bytes());
+    // let mut checkbox = CheckBox::new(
+    //     &checkbox_state,
+    //     checkbox_focus_id,
+    //     Box::new(DefaultCheckBoxStyle::default()),
+    //     &sdl.texture_creator,
+    // );
+    // checkbox.focus_id.single_id_loop();
 
     // pad the checkbox a little bit for clarity
     let mut checkbox_border1 = Border::new(
-        &mut checkbox0,
+        &mut checkbox,
         &sdl.texture_creator,
         Box::new(Empty { width: 5 }),
     );
@@ -98,7 +122,12 @@ fn main() -> std::process::ExitCode {
         sizing_policy: BackgroundSizingPolicy::Children,
     };
 
-    let mut content_background9 = SoftwareRenderBackground::new(&mut content_background8, Smooth::fast(0), &sdl.texture_creator);
+    #[cfg(feature = "noise")]
+    let mut content_background9 = SoftwareRenderBackground::new(&mut content_background8, tiny_sdl2_gui::widget::background::Smooth::fast(0), &sdl.texture_creator);
+
+    #[cfg(not(feature = "noise"))]
+    let mut content_background9 = tiny_sdl2_gui::widget::background::SolidColorBackground { color: Color::RGB(100, 100, 100), contained: &mut content_background8, sizing_policy: Default::default() };
+
     content_background9.sizing_policy = BackgroundSizingPolicy::Custom(CustomSizingControl::default());
     
     let mut events_accumulator: Vec<SDLEvent> = Vec::new();
@@ -141,7 +170,9 @@ fn main() -> std::process::ExitCode {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
             }
-            FocusManager::default_start_focus_behavior(&mut focus_manager, &mut events_accumulator);
+            FocusManager::default_start_focus_behavior(&mut focus_manager, &mut events_accumulator,
+                checkbox_focus_id.uid(),
+                checkbox_focus_id.uid());
             for e in events_accumulator.iter_mut().filter(|e| e.available()) {
                 match e.e {
                     sdl2::event::Event::KeyDown {

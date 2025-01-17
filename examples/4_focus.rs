@@ -1,10 +1,11 @@
 use std::{cell::Cell, fs::File, io::Read, path::Path};
 
+use rand::Rng;
 use sdl2::pixels::Color;
 use tiny_sdl2_gui::{
     layout::{horizontal_layout::HorizontalLayout, vertical_layout::VerticalLayout},
     util::{
-        focus::FocusManager,
+        focus::{CircularUID, RefCircularUIDCell, FocusManager, PRNGBytes, UID},
         font::{FontManager, SingleLineTextRenderType, TextRenderer},
         length::{MaxLen, MaxLenPolicy},
     },
@@ -61,61 +62,78 @@ fn main() -> std::process::ExitCode {
 
     let background_color = Cell::new(Color::BLACK);
     let mut layout = VerticalLayout::default();
-
     let mut top_layout = HorizontalLayout::default();
+    let mut bottom_layout = HorizontalLayout::default();
+
     top_layout.max_w_policy =
         tiny_sdl2_gui::layout::vertical_layout::MajorAxisMaxLenPolicy::Together(
             MaxLenPolicy::Literal(MaxLen(0.)),
         );
 
-    let mut binding = CheckBox::new(
+    let mut rng = rand::thread_rng();
+
+    let mut get_prng_bytes = || {
+        let mut bytes = [0u8; 8];
+        rng.fill(&mut bytes);
+        PRNGBytes(bytes)
+    };
+
+    // step by step
+    let checkbox0_focus_id = get_prng_bytes();
+    let checkbox0_focus_id = UID::new(checkbox0_focus_id);
+    let checkbox0_focus_id = CircularUID::new(checkbox0_focus_id);
+    // checkbox borrows the focus id. since it's in a cell, modification can
+    // still be made
+    let checkbox0_focus_id = Cell::new(checkbox0_focus_id);
+
+    let mut checkbox0 = CheckBox::new(
         &check_states[0],
-        focus_manager.next_available_id(),
+        RefCircularUIDCell(&checkbox0_focus_id),
         Box::new(DefaultCheckBoxStyle {}),
         &sdl.texture_creator,
     );
-    top_layout.elems.push(&mut binding);
-    let mut binding = CheckBox::new(
+
+    let binding = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
+    let mut checkbox1 = CheckBox::new(
         &check_states[1],
-        focus_manager.next_available_id(),
+        *RefCircularUIDCell(&binding).set_after(&checkbox0.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
         &sdl.texture_creator,
     );
-    top_layout.elems.push(&mut binding);
-    let mut binding = CheckBox::new(
+
+    let binding = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
+    let mut checkbox2 = CheckBox::new(
         &check_states[2],
-        focus_manager.next_available_id(),
+        *RefCircularUIDCell(&binding).set_after(&checkbox1.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
         &sdl.texture_creator,
     );
-    top_layout.elems.push(&mut binding);
 
-    let mut bottom_layout = HorizontalLayout::default();
-    let mut binding = CheckBox::new(
+    let binding = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
+    let mut checkbox3 = CheckBox::new(
         &check_states[3],
-        focus_manager.next_available_id(),
+        *RefCircularUIDCell(&binding).set_after(&checkbox2.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
         &sdl.texture_creator,
     );
-    bottom_layout.elems.push(&mut binding);
-    let mut binding = CheckBox::new(
+
+    let binding = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
+    let mut checkbox4 = CheckBox::new(
         &check_states[4],
-        focus_manager.next_available_id(),
+        *RefCircularUIDCell(&binding).set_after(&checkbox3.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
         &sdl.texture_creator,
     );
-    bottom_layout.elems.push(&mut binding);
-    let mut binding = CheckBox::new(
+
+    let checkbox5_focus_id = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
+    let mut checkbox5 = CheckBox::new(
         &check_states[5],
-        focus_manager.next_available_id(),
+        *RefCircularUIDCell(&checkbox5_focus_id).set_after(&checkbox4.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
         &sdl.texture_creator,
     );
-    bottom_layout.elems.push(&mut binding);
 
-    layout.elems.push(&mut top_layout);
-    layout.elems.push(&mut bottom_layout);
-
+    let button_focus_id = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
     let mut button = Button::new(
         Box::new(|| {
             println!("Clicked!!!");
@@ -126,12 +144,32 @@ fn main() -> std::process::ExitCode {
             }
             Ok(())
         }),
-        focus_manager.next_available_id(),
+        RefCircularUIDCell(&button_focus_id),
         Box::new(button_style),
         &sdl.texture_creator,
     );
 
+    top_layout.elems.push(&mut checkbox0);
+    top_layout.elems.push(&mut checkbox1);
+    top_layout.elems.push(&mut checkbox2);
+    bottom_layout.elems.push(&mut checkbox3);
+    bottom_layout.elems.push(&mut checkbox4);
+    bottom_layout.elems.push(&mut checkbox5);
+    layout.elems.push(&mut top_layout);
+    layout.elems.push(&mut bottom_layout);
     layout.elems.push(&mut button);
+
+    // testing modification after layout is constructed. note that layout
+    // constructions mutably borrows the components. but we can still do the
+    // modification of the focus ids! this allows elements to be added or
+    // removed to/from the focus loop on the fly
+    let mut button_focus_id_get = button_focus_id.get();
+    let mut checkbox0_focus_id_get = checkbox0_focus_id.get();
+    let mut checkbox5_focus_id_get = checkbox5_focus_id.get();
+    button_focus_id_get.set_after(&mut checkbox5_focus_id_get).set_before(&mut checkbox0_focus_id_get);
+    button_focus_id.set(button_focus_id_get);
+    checkbox0_focus_id.set(checkbox0_focus_id_get);
+    checkbox5_focus_id.set(checkbox5_focus_id_get);
 
     let mut events_accumulator: Vec<SDLEvent> = Vec::new();
     'running: loop {
@@ -173,7 +211,12 @@ fn main() -> std::process::ExitCode {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
             }
-            FocusManager::default_start_focus_behavior(&mut focus_manager, &mut events_accumulator);
+            FocusManager::default_start_focus_behavior(
+                &mut focus_manager,
+                &mut events_accumulator,
+                checkbox0_focus_id.get().uid(),
+                button_focus_id.get().uid(),
+            );
 
             // if unprocessed escape key
             for e in events_accumulator.iter_mut().filter(|e| e.available()) {

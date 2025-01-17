@@ -1,5 +1,7 @@
 # sdl-rust-ui
 
+[Video](https://youtu.be/3zBEHgBt7EQ?si=eZAg6nufy3mj0sCg)🔗
+
 This is a (in progress) library for creating [immediate mode](https://en.wikipedia.org/wiki/Immediate_mode_(computer_graphics)) user interfaces, built off of [rust-sdl2](https://github.com/Rust-SDL2/rust-sdl2).
 
 For usage, see the [examples](./examples/) and documentation.

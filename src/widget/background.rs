@@ -1,3 +1,4 @@
+#[cfg(feature = "noise")]
 use noise::{
     utils::ColorGradient, Add, BasicMulti, Perlin, RotatePoint, ScaleBias, ScalePoint, Seedable,
     TranslatePoint, Turbulence,
@@ -19,6 +20,12 @@ pub enum BackgroundSizingPolicy {
     Custom(CustomSizingControl),
 }
 
+impl Default for BackgroundSizingPolicy {
+    fn default() -> Self {
+        BackgroundSizingPolicy::Children
+    }
+}
+
 pub struct SolidColorBackground<'sdl> {
     pub color: Color,
     pub contained: &'sdl mut dyn Widget,
@@ -26,17 +33,45 @@ pub struct SolidColorBackground<'sdl> {
 }
 
 impl<'sdl> Widget for SolidColorBackground<'sdl> {
-    fn update(&mut self, event: WidgetEvent) -> Result<(), String> {
-        self.contained.update(event)
+    fn update(&mut self, mut event: WidgetEvent) -> Result<(), String> {
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => {
+                // exactly passes sizing information to parent in this
+                // case, no need to place again
+                self.contained.update(event)
+            }
+            BackgroundSizingPolicy::Custom(_) => {
+                // whatever the sizing of the parent, properly place the
+                // contained within it
+                let position_for_contained =
+                    place(self.contained, event.position, event.aspect_ratio_priority)?;
+                self.contained
+                    .update(event.sub_event(position_for_contained))
+            }
+        }
     }
 
-    fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
+    fn draw(&mut self, mut event: WidgetEvent) -> Result<(), String> {
         event.canvas.set_draw_color(self.color);
         let pos: Option<sdl2::rect::Rect> = event.position.into();
         if let Some(pos) = pos {
             event.canvas.fill_rect(pos)?;
         }
-        self.contained.draw(event)
+
+        match &self.sizing_policy {
+            BackgroundSizingPolicy::Children => {
+                // exactly passes sizing information to parent in this case, no
+                // need to place again
+                self.contained.draw(event)
+            }
+            BackgroundSizingPolicy::Custom(_) => {
+                // whatever the sizing of the parent, properly place the
+                // contained within it
+                let position_for_contained =
+                    place(self.contained, event.position, event.aspect_ratio_priority)?;
+                self.contained.draw(event.sub_event(position_for_contained))
+            }
+        }
     }
 
     fn min(&mut self) -> Result<(MinLen, MinLen), String> {
@@ -299,7 +334,7 @@ impl<'sdl, Style: SoftwareRenderBackgroundStyle> SoftwareRenderBackground<'sdl, 
         Self {
             style,
             contained,
-            sizing_policy: BackgroundSizingPolicy::Children,
+            sizing_policy: Default::default(),
             creator,
             color_mod: (0xFF, 0xFF, 0xFF),
             cache: Default::default(),

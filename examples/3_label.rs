@@ -1,9 +1,9 @@
 use std::{cell::Cell, fs::File, io::Read, path::Path};
 
 use compact_str::CompactString;
-use rand::Rng;
 use sdl2::pixels::Color;
-use tiny_sdl2_gui::{layout::{horizontal_layout::HorizontalLayout, vertical_layout::VerticalLayout}, util::{font::{FontManager, SingleLineTextRenderType, TextRenderer}, length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy}}, widget::{background::{BackgroundSizingPolicy, SoftwareRenderBackground, Wood}, debug::CustomSizingControl, multi_line_label::{MultiLineLabel, MultiLineMinHeightFailPolicy}, single_line_label::{DefaultSingleLineLabelState, SingleLineLabel}, texture::AspectRatioFailPolicy, widget::{draw_gui, update_gui, SDLEvent}}};
+use tiny_sdl2_gui::{layout::{horizontal_layout::HorizontalLayout, vertical_layout::VerticalLayout}, util::{font::{FontManager, SingleLineTextRenderType, TextRenderer}, length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy}}, widget::{background::BackgroundSizingPolicy, debug::CustomSizingControl, multi_line_label::{MultiLineLabel, MultiLineMinHeightFailPolicy}, single_line_label::{DefaultSingleLineLabelState, SingleLineLabel}, texture::AspectRatioFailPolicy, widget::{draw_gui, update_gui, SDLEvent}}};
+
 
 
 #[path = "example_common/mod.rs"]
@@ -98,11 +98,19 @@ fn main() -> std::process::ExitCode {
     let mut layout = VerticalLayout::default();
     let mut bottom_layout = HorizontalLayout::default();
 
+    #[cfg(feature = "noise")]
     let mut rng = rand::thread_rng();
-    let random_number: u32 = rng.gen();
-    let mut top = SoftwareRenderBackground::new(&mut top_label, Wood::new(random_number), &sdl.texture_creator);
-    top.sizing_policy = BackgroundSizingPolicy::Custom(CustomSizingControl::default()); // expand
+    #[cfg(feature = "noise")]
+    let random_number: u32 = rand::Rng::gen(&mut rng); 
+    #[cfg(feature = "noise")]
+    let mut top = tiny_sdl2_gui::widget::background::SoftwareRenderBackground::new(&mut top_label, tiny_sdl2_gui::widget::background::Wood::new(random_number), &sdl.texture_creator);
+    #[cfg(feature = "noise")]
     top.set_color_mod((200, 200, 200)); // dim a bit
+
+    #[cfg(not(feature = "noise"))]
+    let mut top = tiny_sdl2_gui::widget::background::SolidColorBackground { color: Color::RGB(255, 127, 80), contained: &mut top_label, sizing_policy: Default::default() };
+
+    top.sizing_policy = BackgroundSizingPolicy::Custom(CustomSizingControl::default()); // expand
 
     layout.elems.push(&mut top);
     layout.elems.push(&mut middle_label);

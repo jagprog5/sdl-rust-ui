@@ -1,6 +1,7 @@
 use std::{cell::Cell, fs::File, io::Read, path::Path};
 
 use compact_str::CompactString;
+use rand::Rng;
 use sdl2::pixels::Color;
 use tiny_sdl2_gui::{
     layout::{
@@ -9,11 +10,11 @@ use tiny_sdl2_gui::{
         vertical_layout::VerticalLayout,
     },
     util::{
-        focus::FocusManager,
+        focus::{CircularUID, FocusManager, PRNGBytes, RefCircularUIDCell, UID},
         font::{FontManager, SingleLineTextRenderType, TextRenderer},
         length::{
-            AspectRatioPreferredDirection, MaxLenFailPolicy, MinLen,
-            MinLenFailPolicy, PreferredPortion,
+            AspectRatioPreferredDirection, MaxLenFailPolicy, MinLen, MinLenFailPolicy,
+            PreferredPortion,
         },
     },
     widget::{
@@ -22,7 +23,10 @@ use tiny_sdl2_gui::{
         debug::CustomSizingControl,
         multi_line_label::{MultiLineLabel, MultiLineMinHeightFailPolicy},
         single_line_label::SingleLineLabel,
-        single_line_text_input::{DefaultSingleLineEditStyle, DefaultSingleLineTextEditState, SingleLineTextEditState, SingleLineTextInput},
+        single_line_text_input::{
+            DefaultSingleLineEditStyle, DefaultSingleLineTextEditState, SingleLineTextEditState,
+            SingleLineTextInput,
+        },
         widget::{draw_gui, update_gui, SDLEvent},
     },
 };
@@ -38,6 +42,16 @@ fn main() -> std::process::ExitCode {
         example_common::sdl_util::SDLSystems::new("text input test", (WIDTH, HEIGHT)).unwrap();
     let mut focus_manager = FocusManager::default();
     let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string()).unwrap();
+
+    let mut rng = rand::thread_rng();
+    let mut get_prng_bytes = || {
+        let mut bytes = [0u8; 8];
+        rng.fill(&mut bytes);
+        PRNGBytes(bytes)
+    };
+
+    let text_input_focus_id = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
+
 
     let mut font_file = File::open(
         Path::new(".")
@@ -94,7 +108,7 @@ fn main() -> std::process::ExitCode {
     let mut text_input = SingleLineTextInput::new(
         Box::new(|| Ok(())), // replaced below
         Box::new(DefaultSingleLineEditStyle::default()),
-        focus_manager.next_available_id(),
+        RefCircularUIDCell(&text_input_focus_id),
         &text_str,
         SingleLineTextRenderType::Blended(Color::WHITE),
         Box::new(TextRenderer::new(&font_manager)),
@@ -118,12 +132,6 @@ fn main() -> std::process::ExitCode {
 
     text_input.functionality = Box::new(text_entered_functionality);
 
-    let mut text_input = Border::new(
-        &mut text_input,
-        &sdl.texture_creator,
-        Box::new(Empty { width: 2 }),
-    );
-
     let binding = CompactString::from("=>");
     let mut enter_button_content = SingleLineLabel::new(
         &binding,
@@ -138,12 +146,24 @@ fn main() -> std::process::ExitCode {
         label: enter_button_content,
     };
 
+    let enter_button_focus_id = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
     let mut enter_button = Button::new(
         Box::new(|| text_entered_functionality()),
-        focus_manager.next_available_id(),
+        *RefCircularUIDCell(&enter_button_focus_id)
+            .set_after(&text_input.focus_id)
+            .set_before(&text_input.focus_id),
         Box::new(enter_button_style),
         &sdl.texture_creator,
     );
+    enter_button.focus_id.set_after(&mut text_input.focus_id);
+    enter_button.focus_id.set_before(&mut text_input.focus_id);
+
+    let mut text_input = Border::new(
+        &mut text_input,
+        &sdl.texture_creator,
+        Box::new(Empty { width: 2 }),
+    );
+
     let mut enter_buttom = Border::new(
         &mut enter_button,
         &sdl.texture_creator,
@@ -209,7 +229,12 @@ fn main() -> std::process::ExitCode {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
             }
-            FocusManager::default_start_focus_behavior(&mut focus_manager, &mut events_accumulator);
+            FocusManager::default_start_focus_behavior(
+                &mut focus_manager,
+                &mut events_accumulator,
+                text_input_focus_id.get().uid(),
+                enter_button_focus_id.get().uid(),
+            );
             for e in events_accumulator.iter_mut().filter(|e| e.available()) {
                 match e.e {
                     sdl2::event::Event::KeyDown {

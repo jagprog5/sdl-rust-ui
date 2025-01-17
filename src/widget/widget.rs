@@ -5,7 +5,7 @@ use crate::util::{
     length::{
         clamp, AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy,
         PreferredPortion,
-    }, rect::FRect,
+    }, rect::FRect, rust::reborrow,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -110,7 +110,7 @@ impl<'sdl> WidgetEvent<'sdl> {
             // do a re-borrow. create a mutable borrow of the mutable borrow
             // output lifetime is elided - it's the re-borrowed lifetime
             focus_manager: match &mut self.focus_manager {
-                Some(v) => Some(&mut *v),
+                Some(focus_manager) => Some(reborrow(focus_manager)),
                 None => None,
             },
             position,

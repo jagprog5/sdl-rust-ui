@@ -10,7 +10,7 @@ use sdl2::{
 };
 
 use crate::util::{
-    focus::{FocusID, FocusManager},
+    focus::{RefCircularUIDCell, FocusManager, WidgetEventFocusSubset},
     font::{SingleLineFontStyle, SingleLineTextRenderType, TextRenderProperties},
     length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy, PreferredPortion},
 };
@@ -226,7 +226,7 @@ pub struct SingleLineTextInput<'sdl, 'state> {
     /// what happens when return key pressed
     pub functionality: Box<dyn FnMut() -> Result<(), String> + 'state>,
 
-    pub focus_id: FocusID,
+    pub focus_id: RefCircularUIDCell<'sdl>,
 
     style: Box<dyn SingleLineTextEditStyle + 'sdl>,
     focused: TextureVariantSizeCache<'sdl>,
@@ -252,7 +252,7 @@ impl<'sdl, 'state> SingleLineTextInput<'sdl, 'state> {
     pub fn new(
         functionality: Box<dyn FnMut() -> Result<(), String> + 'state>,
         style: Box<dyn SingleLineTextEditStyle + 'sdl>,
-        focus_id: FocusID,
+        focus_id: RefCircularUIDCell<'sdl>,
         text: &'state dyn SingleLineTextEditState,
         text_properties: SingleLineTextRenderType,
         font_interface: Box<dyn SingleLineFontStyle<'sdl> + 'sdl>,
@@ -310,26 +310,57 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
     }
 
     fn update(&mut self, mut event: super::widget::WidgetEvent) -> Result<(), String> {
-        FocusManager::default_widget_focus_behavior(self.focus_id, &mut event);
+        // keys:
+        // - only applicable if currently focused
+        // - consume key event once used
+        let focus_manager = match &mut event.focus_manager {
+            Some(v) => v,
+            None => {
+                // a single line text input simply cannot function properly
+                // without a focus manager. this is unlike a button or checkbox,
+                // which still can be pressed and hovered with the mouse and
+                // while not focused
+                debug_assert!(false);
+                return Ok(());
+            }
+        };
 
-        // handle text input events (not to be confused with key down events)
         for sdl_event in event.events.iter_mut().filter(|event| event.available()) {
-            match &sdl_event.e {
+            FocusManager::default_widget_focus_behavior(
+                self.focus_id.0.get(),
+                WidgetEventFocusSubset {
+                    focus_manager,
+                    position: event.position,
+                    event: sdl_event,
+                    canvas: event.canvas,
+                },
+            );
+
+            if sdl_event.consumed() {
+                continue; // consumed as a result of default_widget_focus_behavior
+            }
+
+            if !focus_manager.is_focused(self.focus_id.uid()) {
+                // keys:
+                // - only applicable if currently focused
+                // - consume key event once used
+                continue;
+            }
+
+            let mut consume_event = false; // fighting with borrow checker
+            match &mut sdl_event.e {
                 // if enter key is released and this widget has focus then trigger the functionality
                 sdl2::event::Event::KeyUp {
                     repeat: false,
                     keycode: Some(Keycode::Return),
                     ..
                 } => {
-                    if let Some(focus_manager) = &event.focus_manager {
-                        if focus_manager.is_focused(self.focus_id) {
-                            match (self.functionality)() {
-                                Ok(()) => (),
-                                Err(e) => return Err(e),
-                            };
-                            sdl_event.set_consumed();
-                        }
-                    }
+                    // consume before functionality
+                    sdl_event.set_consumed();
+                    match (self.functionality)() {
+                        Ok(()) => (),
+                        Err(e) => return Err(e),
+                    };
                 }
                 // if backspace is pressed then pop the last character
                 sdl2::event::Event::KeyDown {
@@ -337,30 +368,28 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                     keymod,
                     ..
                 } => {
-                    if let Some(focus_manager) = &event.focus_manager {
-                        if focus_manager.is_focused(self.focus_id) {
-                            let mut content = self.text.get();
-                            if keymod.contains(Mod::LCTRLMOD) || keymod.contains(Mod::RCTRLMOD) {
-                                content.clear();
-                            } else {
-                                content.pop();
-                            }
-                            self.text.set(content);
-                            sdl_event.set_consumed();
-                        }
+                    consume_event = true;
+                    let mut content = self.text.get();
+                    if keymod.contains(Mod::LCTRLMOD) || keymod.contains(Mod::RCTRLMOD) {
+                        content.clear();
+                    } else {
+                        content.pop();
                     }
+                    self.text.set(content);
                 }
-                // if text is typed then append it to the text
+                // if text is typed then append it to the text. a text input
+                // event is NOT a key down event. it handles utf8 typing
                 sdl2::event::Event::TextInput { text, .. } => {
-                    if let Some(focus_manager) = &event.focus_manager {
-                        if focus_manager.is_focused(self.focus_id) {
-                            let mut content = self.text.get();
-                            content += text;
-                            self.text.set(content);
-                        }
-                    }
+                    consume_event = true;
+                    let mut content = self.text.get();
+                    content += text;
+                    self.text.set(content);
                 }
                 _ => {}
+            }
+
+            if consume_event {
+                sdl_event.set_consumed();
             }
         }
         Ok(())
@@ -482,7 +511,7 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
         // apply the style
         let focused = event
             .focus_manager
-            .map(|f| f.is_focused(self.focus_id))
+            .map(|f| f.is_focused(self.focus_id.uid()))
             .unwrap_or(false);
 
         let cache = if focused {
