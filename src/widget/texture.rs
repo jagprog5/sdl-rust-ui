@@ -42,6 +42,8 @@ impl Default for AspectRatioFailPolicy {
 /// widget for a static sdl2 texture
 pub struct Texture<'sdl> {
     pub texture: &'sdl sdl2::render::Texture<'sdl>,
+    /// none means use the entire texture
+    pub texture_src: Option<sdl2::rect::Rect>,
 
     /// how should the texture be stretched / sized if the aspect ratio is not
     /// respected
@@ -66,6 +68,7 @@ impl<'sdl> Texture<'sdl> {
     pub fn new(texture: &'sdl sdl2::render::Texture<'sdl>) -> Texture<'sdl> {
         Texture {
             texture: texture,
+            texture_src: Default::default(),
             aspect_ratio_fail_policy: Default::default(),
             request_aspect_ratio: true,
             min_w_fail_policy: Default::default(),
@@ -180,6 +183,7 @@ impl<'sdl> Widget for Texture<'sdl> {
             self.texture,
             &self.aspect_ratio_fail_policy,
             event.canvas,
+            self.texture_src,
             event.position,
         )
     }
@@ -189,14 +193,22 @@ pub(crate) fn texture_draw(
     texture: &sdl2::render::Texture,
     aspect_ratio_fail_policy: &AspectRatioFailPolicy,
     canvas: &mut sdl2::render::WindowCanvas,
+    src: Option<sdl2::rect::Rect>,
     dst: crate::util::rect::FRect,
 ) -> Result<(), String> {
     // dst is kept as float form until just before canvas copy. needed or else
     // it is jumpy
 
-    let query = texture.query();
-    if query.width == 0 || query.height == 0 {
-        return Ok(()); // can't draw empty texture (and guard div 0)
+    let (src_x, src_y, src_w, src_h) = match src {
+        None => {
+            let query = texture.query();
+            (0, 0, query.width, query.height)
+        }
+        Some(v) => (v.x(), v.y(), v.width(), v.height()),
+    };
+
+    if src_w == 0 || src_h == 0 {
+        return Ok(()); // can't draw empty. also guards against div by 0
     }
 
     match aspect_ratio_fail_policy {
@@ -205,11 +217,11 @@ pub(crate) fn texture_draw(
                 None => return Ok(()), // can't draw zero size
                 Some(v) => v,
             };
-            canvas.copy(texture, None, Some(dst))
+            canvas.copy(texture, src, Some(dst))
         }
         AspectRatioFailPolicy::ZoomOut((zoom_x, zoom_y)) => {
-            let src_w = query.width as f32;
-            let src_h = query.height as f32;
+            let src_w = src_w as f32;
+            let src_h = src_h as f32;
             let src_aspect_ratio = src_w / src_h; // div guarded above
             if dst.h == 0. {
                 return Ok(()); // guard div + can't drawn zero area texture
@@ -229,7 +241,7 @@ pub(crate) fn texture_draw(
                 let dst_y_offset = ((dst.h - dst_height as f32) * zoom_y).round() as i32;
                 canvas.copy(
                     texture,
-                    None,
+                    src,
                     Some(sdl2::rect::Rect::new(
                         dst.x.round() as i32,
                         dst.y.round() as i32 + dst_y_offset,
@@ -250,7 +262,7 @@ pub(crate) fn texture_draw(
                 let dst_x_offset = ((dst.w - dst_width as f32) * zoom_x) as i32;
                 canvas.copy(
                     texture,
-                    None,
+                    src,
                     Some(sdl2::rect::Rect::new(
                         dst.x.round() as i32 + dst_x_offset,
                         dst.y.round() as i32,
@@ -266,33 +278,33 @@ pub(crate) fn texture_draw(
                 Some(v) => v,
             };
 
-            let src_w = query.width as f32;
-            let src_h = query.height as f32;
+            let src_w_f = src_w as f32;
+            let src_h_f = src_h as f32;
 
-            let src_aspect_ratio = src_w / src_h; // guarded above
-            let dst_aspect_ratio = dst.w / dst.h; // guarded above by dst_sdl2
+            let src_aspect_ratio = src_w_f / src_h_f; // guarded above
+            let dst_aspect_ratio = dst.w / dst.h; // guarded above by dst_sdl2 into
 
             if src_aspect_ratio > dst_aspect_ratio {
-                let width = (dst_aspect_ratio * src_h).round() as u32;
+                let width = (dst_aspect_ratio * src_h_f).round() as u32;
                 if width == 0 {
                     return Ok(()); // too extreme of a ratio
                 }
-                let x = ((src_w - width as f32) * zoom_x) as i32;
+                let x = ((src_w_f - width as f32) * zoom_x) as i32;
                 canvas.copy(
                     texture,
-                    Some(sdl2::rect::Rect::new(x, 0, width, query.height)),
+                    Some(sdl2::rect::Rect::new(src_x + x, src_y, width, src_h)),
                     Some(dst_sdl2),
                 )
             } else {
-                //                   V guarded above by dst_sdl2
-                let height = ((src_w / dst.w) * dst.h).round() as u32;
+                //                     V guarded above by dst_sdl2 into
+                let height = ((src_w_f / dst.w) * dst.h).round() as u32;
                 if height == 0 {
                     return Ok(()); // too extreme of a ratio
                 }
-                let y = ((src_h - height as f32) * zoom_y) as i32;
+                let y = ((src_h_f - height as f32) * zoom_y) as i32;
                 canvas.copy(
                     texture,
-                    Some(sdl2::rect::Rect::new(0, y, query.width, height)),
+                    Some(sdl2::rect::Rect::new(src_x, src_y + y, src_w, height)),
                     Some(dst_sdl2),
                 )
             }

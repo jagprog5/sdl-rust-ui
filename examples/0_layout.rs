@@ -184,11 +184,14 @@ fn main() -> std::process::ExitCode {
                     }
                     sdl2::event::Event::KeyDown {
                         keycode: Some(sdl2::keyboard::Keycode::Escape),
-                        repeat: false,
+                        repeat,
                         ..
                     } => {
                         // if unprocessed escape key
                         e.set_consumed(); // intentional redundant
+                        if repeat {
+                            continue;
+                        }
                         break 'running;
                     }
                     _ => {}

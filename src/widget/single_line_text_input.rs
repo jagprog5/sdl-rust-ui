@@ -10,7 +10,7 @@ use sdl2::{
 };
 
 use crate::util::{
-    focus::{RefCircularUIDCell, FocusManager, WidgetEventFocusSubset},
+    focus::{FocusManager, RefCircularUIDCell, WidgetEventFocusSubset},
     font::{SingleLineFontStyle, SingleLineTextRenderType, TextRenderProperties},
     length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy, PreferredPortion},
 };
@@ -221,14 +221,83 @@ impl<'sdl> TextureVariantSizeCache<'sdl> {
     }
 }
 
+pub enum SingleLineTextInputSoundVariant {
+    Focus,
+    TextAdded,
+    TextRemoved,
+    Enter,
+}
+
+/// a style which does not play any sounds and is not reliant on sdl2-mixer being enabled
+#[derive(Clone, Copy)]
+pub struct EmptySingleLineTextInputSoundStyle {}
+
+impl SingleLineTextInputSoundStyle for EmptySingleLineTextInputSoundStyle {
+    fn play_sound(&mut self, _which: SingleLineTextInputSoundVariant) -> Result<(), String> {
+        // nothing
+        Ok(())
+    }
+}
+
+pub trait SingleLineTextInputSoundStyle {
+    fn play_sound(&mut self, which: SingleLineTextInputSoundVariant) -> Result<(), String>;
+}
+
+#[cfg(feature = "sdl2-mixer")]
+#[derive(Clone, Copy)]
+pub struct DefaultSingleLineTextInputSoundStyle<'sdl> {
+    pub sound_manager: &'sdl Cell<Option<crate::util::audio::SoundManager>>,
+    pub focus_sound_path: Option<&'sdl std::path::Path>,
+    pub text_added_sound_path: Option<&'sdl std::path::Path>,
+    pub text_removed_sound_path: Option<&'sdl std::path::Path>,
+    pub enter_sound_path: Option<&'sdl std::path::Path>,
+}
+
+#[cfg(feature = "sdl2-mixer")]
+impl<'sdl> SingleLineTextInputSoundStyle for DefaultSingleLineTextInputSoundStyle<'sdl> {
+    fn play_sound(&mut self, which: SingleLineTextInputSoundVariant) -> Result<(), String> {
+        let maybe_sound_path: Option<&std::path::Path> = match which {
+            SingleLineTextInputSoundVariant::Focus => self.focus_sound_path,
+            SingleLineTextInputSoundVariant::TextAdded => self.text_added_sound_path,
+            SingleLineTextInputSoundVariant::TextRemoved => self.text_removed_sound_path,
+            SingleLineTextInputSoundVariant::Enter => self.enter_sound_path,
+        };
+        let sound_path = match maybe_sound_path {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+
+        let mut maybe_manager = self.sound_manager.take();
+        let manager = match maybe_manager.as_mut() {
+            Some(v) => v,
+            // should never error, as it will always be returned to the cell
+            None => return Err("couldn't reference sound manager".to_owned()),
+        };
+        let maybe_r = manager.get(&sound_path);
+        self.sound_manager.set(maybe_manager);
+        let r = maybe_r?;
+        // do not handle err here (e.g. not enough channels)
+        let _channel = sdl2::mixer::Channel::all().play(&r, 0);
+        Ok(())
+    }
+}
+
 /// contains a single line label which is editable
 pub struct SingleLineTextInput<'sdl, 'state> {
     /// what happens when return key pressed
     pub functionality: Box<dyn FnMut() -> Result<(), String> + 'state>,
 
     pub focus_id: RefCircularUIDCell<'sdl>,
+    /// internal state for sound
+    focused_previous_frame: bool,
+    /// internal state for sound - limit with many type sounds at once
+    previous_text_input_timestamp: u32,
 
+    /// how does the text input look
     style: Box<dyn SingleLineTextEditStyle + 'sdl>,
+    /// what sounds should be played when the text bos is interacted with
+    sounds: Box<dyn SingleLineTextInputSoundStyle + 'sdl>,
+
     focused: TextureVariantSizeCache<'sdl>,
     not_focused: TextureVariantSizeCache<'sdl>,
 
@@ -252,6 +321,7 @@ impl<'sdl, 'state> SingleLineTextInput<'sdl, 'state> {
     pub fn new(
         functionality: Box<dyn FnMut() -> Result<(), String> + 'state>,
         style: Box<dyn SingleLineTextEditStyle + 'sdl>,
+        sounds: Box<dyn SingleLineTextInputSoundStyle + 'sdl>,
         focus_id: RefCircularUIDCell<'sdl>,
         text: &'state dyn SingleLineTextEditState,
         text_properties: SingleLineTextRenderType,
@@ -261,9 +331,12 @@ impl<'sdl, 'state> SingleLineTextInput<'sdl, 'state> {
         Self {
             functionality,
             style,
+            sounds,
             focused: Default::default(),
             not_focused: Default::default(),
             focus_id,
+            focused_previous_frame: false,
+            previous_text_input_timestamp: 0,
             text,
             text_properties,
             font_interface,
@@ -324,6 +397,15 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                 return Ok(());
             }
         };
+        // detect rising edge of focus, for sound playing
+        let mut previously_focused = focus_manager.is_focused(self.focus_id.uid());
+
+        if previously_focused && !self.focused_previous_frame {
+            // detect if focus was sent to this widget for any reason by
+            // something else since the last time it was updated
+            self.sounds
+                .play_sound(SingleLineTextInputSoundVariant::Focus)?;
+        }
 
         for sdl_event in event.events.iter_mut().filter(|event| event.available()) {
             FocusManager::default_widget_focus_behavior(
@@ -336,10 +418,6 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                 },
             );
 
-            if sdl_event.consumed() {
-                continue; // consumed as a result of default_widget_focus_behavior
-            }
-
             if !focus_manager.is_focused(self.focus_id.uid()) {
                 // keys:
                 // - only applicable if currently focused
@@ -347,51 +425,119 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                 continue;
             }
 
-            let mut consume_event = false; // fighting with borrow checker
-            match &mut sdl_event.e {
-                // if enter key is released and this widget has focus then trigger the functionality
-                sdl2::event::Event::KeyUp {
-                    repeat: false,
-                    keycode: Some(Keycode::Return),
-                    ..
-                } => {
-                    // consume before functionality
-                    sdl_event.set_consumed();
-                    match (self.functionality)() {
-                        Ok(()) => (),
-                        Err(e) => return Err(e),
-                    };
-                }
-                // if backspace is pressed then pop the last character
-                sdl2::event::Event::KeyDown {
-                    keycode: Some(Keycode::Backspace),
-                    keymod,
-                    ..
-                } => {
-                    consume_event = true;
-                    let mut content = self.text.get();
-                    if keymod.contains(Mod::LCTRLMOD) || keymod.contains(Mod::RCTRLMOD) {
-                        content.clear();
-                    } else {
-                        content.pop();
-                    }
-                    self.text.set(content);
-                }
-                // if text is typed then append it to the text. a text input
-                // event is NOT a key down event. it handles utf8 typing
-                sdl2::event::Event::TextInput { text, .. } => {
-                    consume_event = true;
-                    let mut content = self.text.get();
-                    content += text;
-                    self.text.set(content);
-                }
-                _ => {}
+            if previously_focused == false {
+                previously_focused = true;
+                self.sounds
+                    .play_sound(SingleLineTextInputSoundVariant::Focus)?;
             }
 
+            if sdl_event.consumed() {
+                continue; // consumed as a result of default_widget_focus_behavior
+            }
+
+            static SOUND_LIMITER: u32 = 50; // too frequent sounds bad
+
+            // fix repeat logic
+            // fix consume_event logic
+
+            let (consume_event, maybe_err): (bool, Option<String>) = (|| {
+                match &mut sdl_event.e {
+                    // if enter key is released and this widget has focus then trigger the functionality
+                    sdl2::event::Event::KeyUp {
+                        repeat,
+                        keycode: Some(Keycode::Return),
+                        ..
+                    } => {
+                        if *repeat {
+                            return (true, None);
+                        }
+                        // generally, try to play the sound before the
+                        // functionality happens
+                        if let Err(err) = self
+                            .sounds
+                            .play_sound(SingleLineTextInputSoundVariant::Enter)
+                        {
+                            return (true, Some(err));
+                        }
+
+                        match (self.functionality)() {
+                            Ok(()) => return (true, None),
+                            Err(e) => return (true, Some(e)),
+                        };
+                    }
+                    // if backspace is pressed then pop the last character
+                    sdl2::event::Event::KeyDown {
+                        keycode: Some(Keycode::Backspace),
+                        keymod,
+                        timestamp,
+                        ..
+                    } => {
+                        let mut content = self.text.get();
+                        if content.len() != 0
+                            && timestamp
+                                .checked_sub(self.previous_text_input_timestamp)
+                                .unwrap_or(SOUND_LIMITER)
+                                >= SOUND_LIMITER
+                        {
+                            self.previous_text_input_timestamp = *timestamp;
+                            if let Err(err) = self
+                                .sounds
+                                .play_sound(SingleLineTextInputSoundVariant::TextRemoved)
+                            {
+                                return (true, Some(err));
+                            }
+                        }
+                        if keymod.contains(Mod::LCTRLMOD) || keymod.contains(Mod::RCTRLMOD) {
+                            content.clear();
+                        } else {
+                            content.pop();
+                        }
+                        self.text.set(content);
+                        return (true, None);
+                    }
+                    // if text is typed then append it to the text. a text input
+                    // event is NOT a key down event. it handles utf8 typing
+                    sdl2::event::Event::TextInput {
+                        text, timestamp, ..
+                    } => {
+                        if timestamp
+                            .checked_sub(self.previous_text_input_timestamp)
+                            .unwrap_or(SOUND_LIMITER)
+                            >= SOUND_LIMITER
+                        {
+                            self.previous_text_input_timestamp = *timestamp;
+                            if let Err(err) = self
+                                .sounds
+                                .play_sound(SingleLineTextInputSoundVariant::TextAdded)
+                            {
+                                return (true, Some(err));
+                            }
+                        }
+
+                        let mut content = self.text.get();
+                        content += text;
+                        self.text.set(content);
+                        return (true, None);
+                    }
+                    _ => {
+                        return (false, None);
+                    }
+                }
+            })();
+
+            // still consume the event first even if the consumption of the
+            // event resulted in an error
             if consume_event {
                 sdl_event.set_consumed();
             }
+
+            if let Some(err) = maybe_err {
+                return Err(err);
+            }
         }
+
+        self.focused_previous_frame = focus_manager.is_focused(self.focus_id.uid());
+
         Ok(())
     }
 

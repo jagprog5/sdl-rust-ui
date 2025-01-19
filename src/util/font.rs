@@ -3,6 +3,7 @@ use std::{
     rc::{Rc, Weak},
 };
 
+#[cfg(feature = "sdl2-ttf")]
 use sdl2::{
     pixels::Color,
     render::TextureCreator,
@@ -11,9 +12,11 @@ use sdl2::{
     ttf::{Font, Sdl2TtfContext},
     video::WindowContext,
 };
+#[cfg(feature = "sdl2-ttf")]
 use weak_table::WeakValueHashMap;
 
 /// manages a font. use this to get a font object with a certain point size
+#[cfg(feature = "sdl2-ttf")]
 pub struct FontManager<'sdl> {
     ttf_context: &'sdl Sdl2TtfContext,
     /// refs ttf data
@@ -22,17 +25,19 @@ pub struct FontManager<'sdl> {
     fonts: WeakValueHashMap<u16, Weak<Font<'sdl, 'sdl>>>,
 }
 
+#[cfg(feature = "sdl2-ttf")]
 impl<'sdl> FontManager<'sdl> {
     /// font_data is the contents of a ttf file read to the end
-    pub fn new(ttf_context: &'sdl Sdl2TtfContext, font_data: &'sdl [u8]) -> Result<Self, String> {
-        Ok(Self {
+    pub fn new(ttf_context: &'sdl Sdl2TtfContext, font_data: &'sdl [u8]) -> Self {
+        Self {
             ttf_context,
             font_data,
             fonts: Default::default(),
-        })
+        }
     }
 }
 
+#[cfg(feature = "sdl2-ttf")]
 impl<'sdl> FontManager<'sdl> {
     pub fn get(&mut self, point_size: u16) -> Result<Rc<Font<'sdl, 'sdl>>, String> {
         match self.fonts.get(&point_size) {
@@ -49,7 +54,7 @@ impl<'sdl> FontManager<'sdl> {
 
 // =============================================================================
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum SingleLineTextRenderType {
     #[deprecated(note="looks like sh**")]
     Solid(Color),
@@ -64,7 +69,7 @@ impl Default for SingleLineTextRenderType {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct TextRenderProperties {
     pub point_size: u16,
     pub render_type: SingleLineTextRenderType,
@@ -114,6 +119,7 @@ pub trait MultiLineFontStyle<'sdl> {
     ) -> Result<sdl2::render::Texture<'sdl>, String>;
 }
 
+#[cfg(feature = "sdl2-ttf")]
 #[derive(Clone)]
 struct TextRendererFontCache<'sdl> {
     /// the cached object
@@ -122,12 +128,14 @@ struct TextRendererFontCache<'sdl> {
     pub font_point_size: u16,
 }
 
+#[cfg(feature = "sdl2-ttf")]
 #[derive(Clone)]
 pub struct TextRenderer<'sdl> {
     font_manager: &'sdl Cell<Option<FontManager<'sdl>>>,
     cache: Option<TextRendererFontCache<'sdl>>,
 }
 
+#[cfg(feature = "sdl2-ttf")]
 impl<'sdl> TextRenderer<'sdl> {
     pub fn new(font_manager: &'sdl Cell<Option<FontManager<'sdl>>>) -> Self {
         Self {
@@ -137,6 +145,7 @@ impl<'sdl> TextRenderer<'sdl> {
     }
 }
 
+#[cfg(feature = "sdl2-ttf")]
 impl<'sdl> SingleLineFontStyle<'sdl> for TextRenderer<'sdl> {
     fn render(
         &mut self,
@@ -178,8 +187,9 @@ impl<'sdl> SingleLineFontStyle<'sdl> for TextRenderer<'sdl> {
                         // should never error, as it will always be returned to the cell
                         None => return Err("couldn't reference font manager".to_owned()),
                     };
-                    let r = manager.get(properties.point_size)?;
+                    let maybe_r = manager.get(properties.point_size);
                     self.font_manager.set(maybe_manager);
+                    let r = maybe_r?;
                     &self
                         .cache
                         .insert(TextRendererFontCache {
@@ -227,8 +237,9 @@ impl<'sdl> SingleLineFontStyle<'sdl> for TextRenderer<'sdl> {
                     // should never error, as it will always be returned to the cell
                     None => return Err("couldn't reference font manager".to_owned()),
                 };
-                let r = manager.get(point_size)?;
+                let maybe_r = manager.get(point_size);
                 self.font_manager.set(maybe_manager);
+                let r = maybe_r?;
                 &self
                     .cache
                     .insert(TextRendererFontCache {
@@ -251,6 +262,7 @@ impl<'sdl> SingleLineFontStyle<'sdl> for TextRenderer<'sdl> {
     }
 }
 
+#[cfg(feature = "sdl2-ttf")]
 impl<'sdl> MultiLineFontStyle<'sdl> for TextRenderer<'sdl> {
     fn render(
         &mut self,
@@ -287,8 +299,9 @@ impl<'sdl> MultiLineFontStyle<'sdl> for TextRenderer<'sdl> {
                         // should never error, as it will always be returned to the cell
                         None => return Err("couldn't reference font manager".to_owned()),
                     };
-                    let r = manager.get(point_size)?;
+                    let maybe_r = manager.get(point_size);
                     self.font_manager.set(maybe_manager);
+                    let r = maybe_r?;
                     &self
                         .cache
                         .insert(TextRendererFontCache {

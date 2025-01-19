@@ -11,8 +11,14 @@ use super::vertical_layout::{direction_conditional_iter_mut, MajorAxisMaxLenPoli
 pub struct HorizontalLayout<'sdl> {
     pub elems: Vec<&'sdl mut dyn Widget>,
     /// reverse the order IN TIME that elements are updated and drawn in. this
-    /// does affect the placement of elements in space
+    /// does not affect the placement of elements in space (except for errors caused
+    /// by enabling monotonic)
     pub reverse: bool,
+    /// enable to ensure that a change in parent len will always cause the same
+    /// type of change or no change in the child len. this happens at the cost
+    /// of the entire layout not expanding to fit the entire portion of the
+    /// parent (does not correct for rounding down accumulation)
+    pub monotonic: bool,
     pub preferred_w: PreferredPortion,
     pub preferred_h: PreferredPortion,
     pub min_w_fail_policy: MinLenFailPolicy,
@@ -30,6 +36,7 @@ impl<'sdl> Default for HorizontalLayout<'sdl> {
         Self {
             elems: Default::default(),
             reverse: Default::default(),
+            monotonic: Default::default(),
             preferred_w: Default::default(),
             preferred_h: Default::default(),
             min_w_fail_policy: Default::default(),
@@ -151,7 +158,7 @@ macro_rules! impl_widget_fn {
                 e_err_accumulation += info.width - info.width.floor();
                 info.width = info.width.floor();
                 // this is tied to crate::util::rect::rect_position_round
-                if e_err_accumulation >= 0.5 {
+                if !self.monotonic && e_err_accumulation >= 0.5 {
                     info.width += 1.;
                     e_err_accumulation -= 1.;
                 }

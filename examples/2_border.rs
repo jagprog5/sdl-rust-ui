@@ -1,5 +1,12 @@
 use example_common::fancy_surface;
-use tiny_sdl2_gui::{util::length::{MinLen, MinLenPolicy}, widget::{border::{Bevel, Border}, texture::{AspectRatioFailPolicy, Texture}, widget::{draw_gui, update_gui, SDLEvent}}};
+use tiny_sdl2_gui::{
+    util::length::{MinLen, MinLenPolicy},
+    widget::{
+        border::{Bevel, Border},
+        texture::{AspectRatioFailPolicy, Texture},
+        widget::{draw_gui, update_gui, SDLEvent},
+    },
+};
 
 #[path = "example_common/mod.rs"]
 mod example_common;
@@ -10,15 +17,17 @@ fn main() -> std::process::ExitCode {
 
     let mut sdl = match example_common::sdl_util::SDLSystems::new("border", (WIDTH, HEIGHT)) {
         Ok(v) => v,
-        Err(e) => 
-        {
+        Err(e) => {
             eprintln!("{}", e.to_string());
-            return std::process::ExitCode::FAILURE
-        },
+            return std::process::ExitCode::FAILURE;
+        }
     };
 
     let surface = fancy_surface::and();
-    let texture = sdl.texture_creator.create_texture_from_surface(surface).expect("err create texture");
+    let texture = sdl
+        .texture_creator
+        .create_texture_from_surface(surface)
+        .expect("err create texture");
     let mut texture_widget = Texture::new(&texture);
     texture_widget.request_aspect_ratio = false;
     texture_widget.aspect_ratio_fail_policy = AspectRatioFailPolicy::Stretch;
@@ -41,7 +50,7 @@ fn main() -> std::process::ExitCode {
                 }
             }
         }
-        
+
         let empty = events_accumulator.len() == 0; // lower cpu usage when idle
 
         if !empty {
@@ -64,17 +73,20 @@ fn main() -> std::process::ExitCode {
                 match e.e {
                     sdl2::event::Event::KeyDown {
                         keycode: Some(sdl2::keyboard::Keycode::Escape),
-                        repeat: false,
+                        repeat,
                         ..
                     } => {
                         // if unprocessed escape key
                         e.set_consumed(); // intentional redundant
+                        if repeat {
+                            continue;
+                        }
                         break 'running;
                     }
                     _ => {}
                 }
             }
-            events_accumulator.clear(); // clear after use  
+            events_accumulator.clear(); // clear after use
             sdl.canvas.present();
         }
 

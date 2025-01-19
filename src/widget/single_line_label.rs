@@ -155,11 +155,9 @@ impl<'sdl, 'state> SingleLineLabel<'sdl, 'state> {
     }
 }
 
-const LARGE_POINT_SIZE: u16 = 1000;
-
 impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
     fn min(&mut self) -> Result<(MinLen, MinLen), String> {
-        let size = self.ratio_cache.get_size(LARGE_POINT_SIZE, self.text.get().as_str())?;
+        let size = self.ratio_cache.get_size(u16::MAX, self.text.get().as_str())?;
         let ratio = size.0 as f32 / size.1 as f32;
         let min_w = AspectRatioPreferredDirection::width_from_height(ratio, self.min_h.0);
         Ok((MinLen(min_w), self.min_h))
@@ -174,7 +172,7 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
     }
 
     fn max(&mut self) -> Result<(MaxLen, MaxLen), String> {
-        let size = self.ratio_cache.get_size(LARGE_POINT_SIZE, self.text.get().as_str())?;
+        let size = self.ratio_cache.get_size(u16::MAX, self.text.get().as_str())?;
         let ratio = size.0 as f32 / size.1 as f32;
         let max_w = AspectRatioPreferredDirection::width_from_height(ratio, self.max_h.0);
         Ok((MaxLen(max_w), self.max_h))
@@ -235,7 +233,26 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
             None => return Ok(()), // no input handling
         };
 
-        let point_size: u16 = match (position.height() as u32).try_into() {
+        // the point size to render isn't just the height. it's also influenced by the aspect ratio as it get crammed into the available space
+
+        let height_option_1 = position.height();
+
+        let height_option_2 = {
+            let pref_size = match self.ratio_cache.get_size(u16::MAX, self.text.get().as_str()) {
+                Ok(v) => v,
+                Err(err) => return Err(err),
+            };
+            let ratio = pref_size.0 as f32 / pref_size.1 as f32;
+            let height_from_width = AspectRatioPreferredDirection::height_from_width(
+                ratio,
+                position.width() as f32,
+            );
+            height_from_width.ceil() as u32
+        };
+
+        let height_to_use = height_option_1.min(height_option_2);
+
+        let point_size: u16 = match height_to_use.try_into() {
             Ok(v) => v,
             Err(_) => u16::MAX,
         };
@@ -276,6 +293,7 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
             txt,
             &self.aspect_ratio_fail_policy,
             event.canvas,
+            None,
             event.position,
         );
 

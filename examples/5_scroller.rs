@@ -4,9 +4,12 @@ use rand::Rng;
 use sdl2::pixels::Color;
 use tiny_sdl2_gui::{
     layout::scroller::{Scroller, ScrollerSizingPolicy},
-    util::{focus::{CircularUID, RefCircularUIDCell, FocusManager, PRNGBytes, UID}, length::PreferredPortion},
+    util::{
+        focus::{CircularUID, FocusManager, PRNGBytes, RefCircularUIDCell, UID},
+        length::PreferredPortion,
+    },
     widget::{
-        background::{BackgroundSizingPolicy, SoftwareRenderBackground, SolidColorBackground},
+        background::{BackgroundSizingPolicy, SolidColorBackground},
         border::{Bevel, Border, Empty, Gradient, Line},
         checkbox::{CheckBox, DefaultCheckBoxStyle},
         debug::CustomSizingControl,
@@ -23,6 +26,7 @@ fn main() -> std::process::ExitCode {
 
     let mut sdl =
         example_common::sdl_util::SDLSystems::new("nested scroller test", (WIDTH, HEIGHT)).unwrap();
+
     let mut focus_manager = FocusManager::default();
 
     let checkbox_state = Cell::new(false);
@@ -40,23 +44,18 @@ fn main() -> std::process::ExitCode {
     let checkbox_focus_id = CircularUID::new(checkbox_focus_id);
     let checkbox_focus_id = Cell::new(checkbox_focus_id);
     let checkbox_focus_id = RefCircularUIDCell(&checkbox_focus_id);
+    let focus_press_sound_style =
+        tiny_sdl2_gui::widget::checkbox::EmptyFocusPressWidgetSoundStyle {};
+
+    // there is a checkbox. it is the only element
     let mut checkbox = CheckBox::new(
         &checkbox_state,
         checkbox_focus_id,
         Box::new(DefaultCheckBoxStyle {}),
+        Box::new(focus_press_sound_style),
         &sdl.texture_creator,
     );
     checkbox.focus_id.single_id_loop();
-
-    // there is a checkbox. it is the only element
-    // let checkbox_focus_id = UID::new(get_prng_bytes());
-    // let mut checkbox = CheckBox::new(
-    //     &checkbox_state,
-    //     checkbox_focus_id,
-    //     Box::new(DefaultCheckBoxStyle::default()),
-    //     &sdl.texture_creator,
-    // );
-    // checkbox.focus_id.single_id_loop();
 
     // pad the checkbox a little bit for clarity
     let mut checkbox_border1 = Border::new(
@@ -123,13 +122,22 @@ fn main() -> std::process::ExitCode {
     };
 
     #[cfg(feature = "noise")]
-    let mut content_background9 = SoftwareRenderBackground::new(&mut content_background8, tiny_sdl2_gui::widget::background::Smooth::fast(0), &sdl.texture_creator);
+    let mut content_background9 = tiny_sdl2_gui::widget::background::SoftwareRenderBackground::new(
+        &mut content_background8,
+        tiny_sdl2_gui::widget::background::Smooth::fast(0),
+        &sdl.texture_creator,
+    );
 
     #[cfg(not(feature = "noise"))]
-    let mut content_background9 = tiny_sdl2_gui::widget::background::SolidColorBackground { color: Color::RGB(100, 100, 100), contained: &mut content_background8, sizing_policy: Default::default() };
+    let mut content_background9 = tiny_sdl2_gui::widget::background::SolidColorBackground {
+        color: Color::RGB(100, 100, 100),
+        contained: &mut content_background8,
+        sizing_policy: Default::default(),
+    };
 
-    content_background9.sizing_policy = BackgroundSizingPolicy::Custom(CustomSizingControl::default());
-    
+    content_background9.sizing_policy =
+        BackgroundSizingPolicy::Custom(CustomSizingControl::default());
+
     let mut events_accumulator: Vec<SDLEvent> = Vec::new();
     'running: loop {
         for event in sdl.event_pump.poll_iter() {
@@ -170,18 +178,24 @@ fn main() -> std::process::ExitCode {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
             }
-            FocusManager::default_start_focus_behavior(&mut focus_manager, &mut events_accumulator,
+            FocusManager::default_start_focus_behavior(
+                &mut focus_manager,
+                &mut events_accumulator,
                 checkbox_focus_id.uid(),
-                checkbox_focus_id.uid());
+                checkbox_focus_id.uid(),
+            );
             for e in events_accumulator.iter_mut().filter(|e| e.available()) {
                 match e.e {
                     sdl2::event::Event::KeyDown {
                         keycode: Some(sdl2::keyboard::Keycode::Escape),
-                        repeat: false,
+                        repeat,
                         ..
                     } => {
                         // if unprocessed escape key
                         e.set_consumed(); // intentional redundant
+                        if repeat {
+                            continue;
+                        }
                         break 'running;
                     }
                     _ => {}

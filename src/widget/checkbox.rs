@@ -11,7 +11,8 @@ use sdl2::{
 
 use crate::util::{
     focus::{
-        point_in_position_and_clipping_rect, CircularUID, RefCircularUIDCell, FocusManager, WidgetEventFocusSubset
+        point_in_position_and_clipping_rect, CircularUID, FocusManager, RefCircularUIDCell,
+        WidgetEventFocusSubset,
     },
     length::{MaxLen, MinLen},
     rust::reborrow,
@@ -261,6 +262,67 @@ impl<'sdl, TVariant> TextureVariantSizeCache<'sdl, TVariant> {
     }
 }
 
+/// for which sound should be played, for a widget that is focusable and
+/// press-able (like a checkbox or a button)
+pub enum FocusPressWidgetSoundVariant {
+    /// focused or hovered
+    Focus,
+    Press,
+    Release,
+}
+
+pub trait FocusPressWidgetSoundStyle {
+    fn play_sound(&mut self, which: FocusPressWidgetSoundVariant) -> Result<(), String>;
+}
+
+/// a style which does not play any sounds and is not reliant on sdl2-mixer being enabled
+#[derive(Clone, Copy)]
+pub struct EmptyFocusPressWidgetSoundStyle {}
+
+impl FocusPressWidgetSoundStyle for EmptyFocusPressWidgetSoundStyle {
+    fn play_sound(&mut self, _which: FocusPressWidgetSoundVariant) -> Result<(), String> {
+        // nothing
+        Ok(())
+    }
+}
+
+#[cfg(feature = "sdl2-mixer")]
+#[derive(Clone, Copy)]
+pub struct DefaultFocusPressWidgetSoundStyle<'sdl> {
+    pub sound_manager: &'sdl Cell<Option<crate::util::audio::SoundManager>>,
+    pub focus_sound_path: Option<&'sdl std::path::Path>,
+    pub press_sound_path: Option<&'sdl std::path::Path>,
+    pub release_sound_path: Option<&'sdl std::path::Path>,
+}
+
+#[cfg(feature = "sdl2-mixer")]
+impl<'sdl> FocusPressWidgetSoundStyle for DefaultFocusPressWidgetSoundStyle<'sdl> {
+    fn play_sound(&mut self, which: FocusPressWidgetSoundVariant) -> Result<(), String> {
+        let maybe_sound_path: Option<&std::path::Path> = match which {
+            FocusPressWidgetSoundVariant::Focus => self.focus_sound_path,
+            FocusPressWidgetSoundVariant::Press => self.press_sound_path,
+            FocusPressWidgetSoundVariant::Release => self.release_sound_path,
+        };
+        let sound_path = match maybe_sound_path {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+
+        let mut maybe_manager = self.sound_manager.take();
+        let manager = match maybe_manager.as_mut() {
+            Some(v) => v,
+            // should never error, as it will always be returned to the cell
+            None => return Err("couldn't reference sound manager".to_owned()),
+        };
+        let maybe_r = manager.get(&sound_path);
+        self.sound_manager.set(maybe_manager);
+        let r = maybe_r?;
+        // do not handle err here (e.g. not enough channels)
+        let _channel = sdl2::mixer::Channel::all().play(&r, 0);
+        Ok(())
+    }
+}
+
 pub struct CheckBox<'sdl, 'state> {
     pub checked: &'state Cell<bool>,
     pub focus_id: RefCircularUIDCell<'sdl>,
@@ -269,10 +331,17 @@ pub struct CheckBox<'sdl, 'state> {
     /// hovered is only used if no focus manager is available
     hovered: bool,
 
+    /// internal state for sound
+    focused_previous_frame: bool,
+
     pub size: f32,
     creator: &'sdl TextureCreator<WindowContext>,
 
+    /// how does the checkbox look
     style: Box<dyn TextureVariantStyle<CheckBoxTextureVariant> + 'sdl>,
+    /// what sounds should be played when the checkbox is interacted with
+    sounds: Box<dyn FocusPressWidgetSoundStyle + 'sdl>,
+
     idle: TextureVariantSizeCache<'sdl, CheckBoxTextureVariant>,
     focused: TextureVariantSizeCache<'sdl, CheckBoxTextureVariant>,
     focused_pressed: TextureVariantSizeCache<'sdl, CheckBoxTextureVariant>,
@@ -287,6 +356,7 @@ impl<'sdl, 'state> CheckBox<'sdl, 'state> {
         checked: &'state Cell<bool>,
         focus_id: RefCircularUIDCell<'sdl>,
         style: Box<dyn TextureVariantStyle<CheckBoxTextureVariant> + 'sdl>,
+        sounds: Box<dyn FocusPressWidgetSoundStyle + 'sdl>,
         creator: &'sdl TextureCreator<WindowContext>,
     ) -> Self {
         Self {
@@ -294,7 +364,9 @@ impl<'sdl, 'state> CheckBox<'sdl, 'state> {
             focus_id,
             pressed: false,
             hovered: false,
+            focused_previous_frame: false,
             style,
+            sounds,
             size: 30.,
             creator,
             idle: Default::default(),
@@ -312,13 +384,37 @@ impl<'sdl, 'state> CheckBox<'sdl, 'state> {
 pub(crate) fn focus_press_update_implementation<T>(
     hovered: &mut bool,
     pressed: &mut bool,
+    focused_previous_frame: &mut bool,
     focus_id: CircularUID,
     mut event: WidgetEvent,
     functionality: &mut T,
+    sounds: &mut dyn FocusPressWidgetSoundStyle,
 ) -> Result<(), String>
 where
     T: FnMut() -> Result<(), String> + ?Sized,
 {
+    let has_focus_at_beginning = event
+        .focus_manager
+        .as_ref()
+        .map(|focus_manager| focus_manager.is_focused(focus_id.uid()))
+        .unwrap_or(false);
+
+    // detect if focus was sent to this widget for any reason by something else
+    // since the last time it was updated
+    if has_focus_at_beginning && !*focused_previous_frame {
+        sounds.play_sound(FocusPressWidgetSoundVariant::Focus)?;
+    }
+
+    // used to detect rising edge, for when the focus or hover is gained on the
+    // widget. at that point, play sound
+    //
+    // this part got a bit messy, but here's how it's used:
+    // - not touched in key events, as key events are only applicable when the
+    //   widget is already focused (can't be rising edge if already positive)
+    // - any mouse stuff over the widget - set to true
+    // - if mouse moved and was previously false, play sound and set to true
+    let mut focus_sound_state = *hovered || has_focus_at_beginning;
+
     // value updated each frame
     *hovered = false;
     *pressed = false;
@@ -344,7 +440,7 @@ where
             // - only applicable if currently focused
             // - consume key event once used
             sdl2::event::Event::KeyDown {
-                repeat: false,
+                repeat,
                 keycode: Some(Keycode::Tab),
                 keymod,
                 ..
@@ -354,6 +450,9 @@ where
                 if let Some(focus_manager) = reborrow(&mut event.focus_manager) {
                     if focus_manager.is_focused(focus_id.uid()) {
                         sdl_event.set_consumed();
+                        if repeat {
+                            continue;
+                        }
                         if keymod.contains(Mod::LSHIFTMOD) || keymod.contains(Mod::RSHIFTMOD) {
                             focus_manager.0 = focus_id.previous();
                         } else {
@@ -363,19 +462,24 @@ where
                 }
             }
             sdl2::event::Event::KeyDown {
+                repeat,
                 keycode: Some(Keycode::Return),
                 ..
             } => {
                 // enter key pressed down. only if currently focused
                 if let Some(focus_manager) = reborrow(&mut event.focus_manager) {
                     if focus_manager.is_focused(focus_id.uid()) {
-                        *pressed = true;
                         sdl_event.set_consumed();
+                        if repeat {
+                            continue;
+                        }
+                        *pressed = true;
+                        sounds.play_sound(FocusPressWidgetSoundVariant::Press)?;
                     }
                 }
             }
             sdl2::event::Event::KeyUp {
-                repeat: false,
+                repeat,
                 keycode: Some(Keycode::Return),
                 ..
             } => {
@@ -383,6 +487,10 @@ where
                 if let Some(focus_manager) = reborrow(&mut event.focus_manager) {
                     if focus_manager.is_focused(focus_id.uid()) {
                         sdl_event.set_consumed(); // consume before trying functionality
+                        if repeat {
+                            continue;
+                        }
+                        sounds.play_sound(FocusPressWidgetSoundVariant::Release)?;
                         match functionality() {
                             Ok(()) => (),
                             Err(e) => return Err(e),
@@ -404,8 +512,17 @@ where
                     {
                         *hovered = true;
                         if !mousestate.left() {
+                            if focus_sound_state == false {
+                                focus_sound_state = true;
+                                sounds.play_sound(FocusPressWidgetSoundVariant::Focus)?;
+                            }
                             continue;
                         }
+                        if focus_sound_state == false {
+                            focus_sound_state = true;
+                            sounds.play_sound(FocusPressWidgetSoundVariant::Press)?;
+                        }
+
                         // the mouse was moved over the widget AND the left
                         // button is pressed
                         //
@@ -427,9 +544,11 @@ where
                 if let Some(position) = position {
                     if point_in_position_and_clipping_rect(x, y, position, event.canvas.clip_rect())
                     {
+                        sounds.play_sound(FocusPressWidgetSoundVariant::Press)?;
                         // the left mouse button was pressed on this widget
                         *pressed = true;
                         *hovered = true;
+                        focus_sound_state = true;
                         sdl_event.set_consumed();
                         if let Some(focus_manager) = reborrow(&mut event.focus_manager) {
                             focus_manager.0 = Some(focus_id.uid());
@@ -451,10 +570,12 @@ where
                     {
                         *pressed = false;
                         *hovered = true;
+                        focus_sound_state = true;
                         sdl_event.set_consumed();
                         if let Some(focus_manager) = reborrow(&mut event.focus_manager) {
                             focus_manager.0 = Some(focus_id.uid());
                         }
+                        sounds.play_sound(FocusPressWidgetSoundVariant::Release)?;
                         match functionality() {
                             Ok(()) => (),
                             Err(e) => return Err(e),
@@ -465,6 +586,13 @@ where
             _ => {}
         }
     }
+
+    *focused_previous_frame = event
+        .focus_manager
+        .as_ref()
+        .map(|focus_manager| focus_manager.is_focused(focus_id.uid()))
+        .unwrap_or(false);
+
     Ok(())
 }
 
@@ -481,6 +609,7 @@ impl<'sdl, 'state> Widget for CheckBox<'sdl, 'state> {
         focus_press_update_implementation(
             &mut self.hovered,
             &mut self.pressed,
+            &mut self.focused_previous_frame,
             self.focus_id.0.get(),
             event,
             &mut || {
@@ -489,6 +618,7 @@ impl<'sdl, 'state> Widget for CheckBox<'sdl, 'state> {
                 self.checked.set(v);
                 Ok(())
             },
+            self.sounds.as_mut(),
         )
     }
 

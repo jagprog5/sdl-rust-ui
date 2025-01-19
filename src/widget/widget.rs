@@ -184,6 +184,10 @@ pub trait Widget {
 
     /// receive input and change any state which could be viewed by other
     /// widgets. happens before draw for all widgets for each frame
+    /// 
+    /// when update is called, the position of the widget is known for this
+    /// frame (and given in the arg). sizing information should not change
+    /// between here and draw
     fn update(&mut self, _event: WidgetEvent) -> Result<(), String> {
         Ok(())
     }

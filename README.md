@@ -36,15 +36,10 @@ Widgets
  - [clipper](./src/layout/clipper.rs)
  - [debug](./src/widget/debug.rs), for testing sizing
  - [strut](./src/widget/strut.rs), forces spaces
- - [background](./src/widget/background.rs), parallel software rendering of a background texture
+ - [background](./src/widget/background.rs), solid color or parallel software rendering of a background texture
  - [border](./src/widget/border.rs), contains a widget in a border with a border style
  - [texture](./src/widget/texture.rs), generic texture display with sizing control
  - [single](./src/widget/single_line_label.rs) and [multiline](./src/widget/multi_line_label.rs) labels
  - basic [single line text input](./src/widget/single_line_text_input.rs)
  - [button](./src/widget/button.rs)
  - [checkbox](./src/widget/checkbox.rs)
-
-## TODO
-
-- audio
-- general improvements

@@ -5,7 +5,7 @@ use sdl2::pixels::Color;
 use tiny_sdl2_gui::{
     layout::{horizontal_layout::HorizontalLayout, vertical_layout::VerticalLayout},
     util::{
-        focus::{CircularUID, RefCircularUIDCell, FocusManager, PRNGBytes, UID},
+        focus::{CircularUID, FocusManager, PRNGBytes, RefCircularUIDCell, UID},
         font::{FontManager, SingleLineTextRenderType, TextRenderer},
         length::{MaxLen, MaxLenPolicy},
     },
@@ -39,12 +39,35 @@ fn main() -> std::process::ExitCode {
     let font_file_contents = font_file_contents;
     drop(font_file);
 
-    let font_manager = Cell::new(Some(
-        FontManager::new(&ttf_context, &font_file_contents).unwrap(),
-    ));
+    let font_manager = Cell::new(Some(FontManager::new(&ttf_context, &font_file_contents)));
+    #[cfg(feature = "sdl2-mixer")]
+    let sound_manager = Cell::new(Some(tiny_sdl2_gui::util::audio::SoundManager::new(std::time::Duration::from_secs(30))));
+
+    #[cfg(feature = "sdl2-mixer")]
+    let focus_sound_path = Path::new(".")
+        .join("examples")
+        .join("assets")
+        .join("focus_sound.mp3");
+
+    #[cfg(feature = "sdl2-mixer")]
+    let press_sound_path = Path::new(".")
+        .join("examples")
+        .join("assets")
+        .join("press_sound.mp3");
 
     let mut sdl =
         example_common::sdl_util::SDLSystems::new("shift tab! mouse!", (WIDTH, HEIGHT)).unwrap();
+
+    // audio specific stuff. taking same values from rust-sdl2 examples
+    #[cfg(feature = "sdl2-mixer")]
+    let _audio = sdl.sdl_context.audio().unwrap();
+    #[cfg(feature = "sdl2-mixer")]
+    sdl2::mixer::open_audio(44_100, sdl2::mixer::AUDIO_S16LSB, sdl2::mixer::DEFAULT_CHANNELS, 1_024).unwrap();
+    #[cfg(feature = "sdl2-mixer")]
+    let _mixer_context = sdl2::mixer::init(sdl2::mixer::InitFlag::MP3).unwrap();
+    #[cfg(feature = "sdl2-mixer")]
+    sdl2::mixer::allocate_channels(16);
+
     let mut focus_manager = FocusManager::default();
 
     let button_text = DefaultSingleLineLabelState {
@@ -86,10 +109,21 @@ fn main() -> std::process::ExitCode {
     // still be made
     let checkbox0_focus_id = Cell::new(checkbox0_focus_id);
 
+    #[cfg(feature = "sdl2-mixer")]
+    let focus_press_sound_style = tiny_sdl2_gui::widget::checkbox::DefaultFocusPressWidgetSoundStyle {
+        sound_manager: &sound_manager,
+        focus_sound_path: Some(&focus_sound_path),
+        press_sound_path: Some(&press_sound_path),
+        release_sound_path: Default::default(),
+    };
+    #[cfg(not(feature = "sdl2-mixer"))]
+    let focus_press_sound_style = tiny_sdl2_gui::widget::checkbox::EmptyFocusPressWidgetSoundStyle {};
+
     let mut checkbox0 = CheckBox::new(
         &check_states[0],
         RefCircularUIDCell(&checkbox0_focus_id),
         Box::new(DefaultCheckBoxStyle {}),
+        Box::new(focus_press_sound_style.clone()),
         &sdl.texture_creator,
     );
 
@@ -98,6 +132,7 @@ fn main() -> std::process::ExitCode {
         &check_states[1],
         *RefCircularUIDCell(&binding).set_after(&checkbox0.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
+        Box::new(focus_press_sound_style.clone()),
         &sdl.texture_creator,
     );
 
@@ -106,6 +141,7 @@ fn main() -> std::process::ExitCode {
         &check_states[2],
         *RefCircularUIDCell(&binding).set_after(&checkbox1.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
+        Box::new(focus_press_sound_style.clone()),
         &sdl.texture_creator,
     );
 
@@ -114,6 +150,7 @@ fn main() -> std::process::ExitCode {
         &check_states[3],
         *RefCircularUIDCell(&binding).set_after(&checkbox2.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
+        Box::new(focus_press_sound_style.clone()),
         &sdl.texture_creator,
     );
 
@@ -122,6 +159,7 @@ fn main() -> std::process::ExitCode {
         &check_states[4],
         *RefCircularUIDCell(&binding).set_after(&checkbox3.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
+        Box::new(focus_press_sound_style.clone()),
         &sdl.texture_creator,
     );
 
@@ -130,6 +168,7 @@ fn main() -> std::process::ExitCode {
         &check_states[5],
         *RefCircularUIDCell(&checkbox5_focus_id).set_after(&checkbox4.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
+        Box::new(focus_press_sound_style.clone()),
         &sdl.texture_creator,
     );
 
@@ -146,6 +185,7 @@ fn main() -> std::process::ExitCode {
         }),
         RefCircularUIDCell(&button_focus_id),
         Box::new(button_style),
+        Box::new(focus_press_sound_style.clone()),
         &sdl.texture_creator,
     );
 
@@ -166,7 +206,9 @@ fn main() -> std::process::ExitCode {
     let mut button_focus_id_get = button_focus_id.get();
     let mut checkbox0_focus_id_get = checkbox0_focus_id.get();
     let mut checkbox5_focus_id_get = checkbox5_focus_id.get();
-    button_focus_id_get.set_after(&mut checkbox5_focus_id_get).set_before(&mut checkbox0_focus_id_get);
+    button_focus_id_get
+        .set_after(&mut checkbox5_focus_id_get)
+        .set_before(&mut checkbox0_focus_id_get);
     button_focus_id.set(button_focus_id_get);
     checkbox0_focus_id.set(checkbox0_focus_id_get);
     checkbox5_focus_id.set(checkbox5_focus_id_get);

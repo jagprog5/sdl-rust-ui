@@ -1,5 +1,7 @@
 /// SDL sub-systems needed for testing
 pub struct SDLSystems {
+    #[allow(dead_code)]
+    pub sdl_context: sdl2::Sdl,
     pub event_pump: sdl2::EventPump,
     pub canvas: sdl2::render::WindowCanvas,
     #[allow(dead_code)]
@@ -28,6 +30,7 @@ impl SDLSystems {
         let texture_creator = canvas.texture_creator();
         let event_pump = sdl_context.event_pump()?;
         Ok(Self {
+            sdl_context,
             event_pump,
             canvas,
             texture_creator,

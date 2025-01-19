@@ -123,7 +123,7 @@ impl<'a> RefCircularUIDCell<'a> {
     pub fn set_before(&self, other: &RefCircularUIDCell) -> &Self {
         let mut me = self.0.get();
         let mut o = other.0.get();
-        me.set_after(&mut o);
+        me.set_before(&mut o);
         self.0.set(me);
         other.0.set(o);
         self
@@ -190,7 +190,7 @@ impl FocusManager {
             // - only applicable if currently focused
             // - consume key event once used
             sdl2::event::Event::KeyDown {
-                repeat: false,
+                repeat,
                 keycode: Some(Keycode::Tab),
                 keymod,
                 ..
@@ -199,6 +199,9 @@ impl FocusManager {
                     return; // only process tab if I am focused
                 }
                 event.event.set_consumed();
+                if repeat {
+                    return;
+                }
                 if keymod.contains(Mod::LSHIFTMOD) || keymod.contains(Mod::RSHIFTMOD) {
                     // shift tab was pressed
                     event.focus_manager.0 = my_focus_id.previous_uid;
@@ -208,7 +211,7 @@ impl FocusManager {
                 }
             }
             sdl2::event::Event::KeyDown {
-                repeat: false,
+                repeat,
                 keycode: Some(Keycode::ESCAPE),
                 ..
             } => {
@@ -216,6 +219,9 @@ impl FocusManager {
                     return; // only process escape if I am focused
                 }
                 event.event.set_consumed();
+                if repeat {
+                    return;
+                }
                 event.focus_manager.0 = None; // unfocus
             }
             sdl2::event::Event::MouseMotion { x, y, .. } => {
@@ -240,12 +246,15 @@ impl FocusManager {
         for sdl_input in events.iter_mut().filter(|e| e.available()) {
             match sdl_input.e {
                 sdl2::event::Event::KeyDown {
-                    repeat: false,
+                    repeat,
                     keycode: Some(Keycode::Tab),
                     keymod,
                     ..
                 } => {
                     sdl_input.set_consumed();
+                    if repeat {
+                        continue;
+                    }
                     if keymod.contains(Mod::LSHIFTMOD) || keymod.contains(Mod::RSHIFTMOD) {
                         // shift tab was pressed
                         self.0 = Some(end_widget_focus_id);

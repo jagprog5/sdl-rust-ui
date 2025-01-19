@@ -38,8 +38,48 @@ fn main() -> std::process::ExitCode {
     const WIDTH: u32 = 300;
     const HEIGHT: u32 = 200;
 
+    #[cfg(feature = "sdl2-mixer")]
+    let focus_sound_path = Path::new(".")
+        .join("examples")
+        .join("assets")
+        .join("focus_sound.mp3");
+
+    #[cfg(feature = "sdl2-mixer")]
+    let press_sound_path = Path::new(".")
+        .join("examples")
+        .join("assets")
+        .join("press_sound.mp3");
+
+    #[cfg(feature = "sdl2-mixer")]
+    let text_input_sound = Path::new(".")
+        .join("examples")
+        .join("assets")
+        .join("text_input_sound.mp3");
+
+    #[cfg(feature = "sdl2-mixer")]
+    let sound_manager = Cell::new(Some(tiny_sdl2_gui::util::audio::SoundManager::new(
+        std::time::Duration::from_secs(30),
+    )));
+
     let mut sdl =
         example_common::sdl_util::SDLSystems::new("text input test", (WIDTH, HEIGHT)).unwrap();
+
+    // audio specific stuff. taking same values from rust-sdl2 examples
+    #[cfg(feature = "sdl2-mixer")]
+    let _audio = sdl.sdl_context.audio().unwrap();
+    #[cfg(feature = "sdl2-mixer")]
+    sdl2::mixer::open_audio(
+        44_100,
+        sdl2::mixer::AUDIO_S16LSB,
+        sdl2::mixer::DEFAULT_CHANNELS,
+        1_024,
+    )
+    .unwrap();
+    #[cfg(feature = "sdl2-mixer")]
+    let _mixer_context = sdl2::mixer::init(sdl2::mixer::InitFlag::MP3).unwrap();
+    #[cfg(feature = "sdl2-mixer")]
+    sdl2::mixer::allocate_channels(16);
+
     let mut focus_manager = FocusManager::default();
     let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string()).unwrap();
 
@@ -51,7 +91,6 @@ fn main() -> std::process::ExitCode {
     };
 
     let text_input_focus_id = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
-
 
     let mut font_file = File::open(
         Path::new(".")
@@ -65,9 +104,7 @@ fn main() -> std::process::ExitCode {
     let font_file_contents = font_file_contents;
     drop(font_file);
 
-    let font_manager = Cell::new(Some(
-        FontManager::new(&ttf_context, &font_file_contents).unwrap(),
-    ));
+    let font_manager = Cell::new(Some(FontManager::new(&ttf_context, &font_file_contents)));
 
     let mut layout = VerticalLayout::default();
     // update order should be reversed, as the multiline label widget relies on
@@ -105,9 +142,23 @@ fn main() -> std::process::ExitCode {
         inner: CompactString::from("content").into(),
     };
 
+    #[cfg(feature = "sdl2-mixer")]
+    let text_input_sound_style =
+        tiny_sdl2_gui::widget::single_line_text_input::DefaultSingleLineTextInputSoundStyle {
+            sound_manager: &sound_manager,
+            focus_sound_path: Some(&focus_sound_path),
+            text_added_sound_path: Some(&text_input_sound),
+            text_removed_sound_path: Some(&text_input_sound),
+            enter_sound_path: Some(&press_sound_path),
+        };
+    #[cfg(not(feature = "sdl2-mixer"))]
+    let text_input_sound_style =
+        tiny_sdl2_gui::widget::single_line_text_input::EmptySingleLineTextInputSoundStyle {};
+
     let mut text_input = SingleLineTextInput::new(
         Box::new(|| Ok(())), // replaced below
         Box::new(DefaultSingleLineEditStyle::default()),
+        Box::new(text_input_sound_style),
         RefCircularUIDCell(&text_input_focus_id),
         &text_str,
         SingleLineTextRenderType::Blended(Color::WHITE),
@@ -147,12 +198,26 @@ fn main() -> std::process::ExitCode {
     };
 
     let enter_button_focus_id = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
+
+    #[cfg(feature = "sdl2-mixer")]
+    let focus_press_sound_style =
+        tiny_sdl2_gui::widget::checkbox::DefaultFocusPressWidgetSoundStyle {
+            sound_manager: &sound_manager,
+            focus_sound_path: Some(&focus_sound_path),
+            press_sound_path: Some(&press_sound_path),
+            release_sound_path: Default::default(),
+        };
+    #[cfg(not(feature = "sdl2-mixer"))]
+    let focus_press_sound_style =
+        tiny_sdl2_gui::widget::checkbox::EmptyFocusPressWidgetSoundStyle {};
+
     let mut enter_button = Button::new(
         Box::new(|| text_entered_functionality()),
         *RefCircularUIDCell(&enter_button_focus_id)
             .set_after(&text_input.focus_id)
             .set_before(&text_input.focus_id),
         Box::new(enter_button_style),
+        Box::new(focus_press_sound_style),
         &sdl.texture_creator,
     );
     enter_button.focus_id.set_after(&mut text_input.focus_id);
@@ -239,11 +304,14 @@ fn main() -> std::process::ExitCode {
                 match e.e {
                     sdl2::event::Event::KeyDown {
                         keycode: Some(sdl2::keyboard::Keycode::Escape),
-                        repeat: false,
+                        repeat,
                         ..
                     } => {
                         // if unprocessed escape key
                         e.set_consumed(); // intentional redundant
+                        if repeat {
+                            continue;
+                        }
                         break 'running;
                     }
                     _ => {}

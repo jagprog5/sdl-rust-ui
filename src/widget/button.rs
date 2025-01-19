@@ -4,7 +4,7 @@ use sdl2::video::WindowContext;
 use crate::util::focus::RefCircularUIDCell;
 use crate::util::length::{MaxLen, MinLen};
 
-use super::checkbox::{TextureVariantSizeCache, TextureVariantStyle};
+use super::checkbox::{FocusPressWidgetSoundStyle, TextureVariantSizeCache, TextureVariantStyle};
 use super::widget::{Widget, WidgetEvent};
 
 #[cfg(feature = "sdl2-ttf")]
@@ -141,8 +141,14 @@ pub struct Button<'sdl, 'state> {
     pressed: bool,
     /// hovered is only used if no focus manager is available
     hovered: bool,
+    /// internal state for sound
+    focused_previous_frame: bool,
 
+    /// how does the button look
     style: Box<dyn ButtonStyle<ButtonTextureVariant> + 'sdl>,
+     /// what sounds should be played when the button is interacted with
+    sounds: Box<dyn FocusPressWidgetSoundStyle + 'sdl>,
+
     creator: &'sdl TextureCreator<WindowContext>,
     idle: TextureVariantSizeCache<'sdl, ButtonTextureVariant>,
     focused: TextureVariantSizeCache<'sdl, ButtonTextureVariant>,
@@ -154,6 +160,7 @@ impl<'sdl, 'state> Button<'sdl, 'state> {
         functionality: Box<dyn FnMut() -> Result<(), String> + 'state>,
         focus_id: RefCircularUIDCell<'sdl>,
         style: Box<dyn ButtonStyle<ButtonTextureVariant> + 'sdl>,
+        sounds: Box<dyn FocusPressWidgetSoundStyle + 'sdl>,
         creator: &'sdl TextureCreator<WindowContext>,
     ) -> Self {
         Self {
@@ -161,7 +168,9 @@ impl<'sdl, 'state> Button<'sdl, 'state> {
             focus_id,
             pressed: false,
             hovered: false,
+            focused_previous_frame: false,
             style,
+            sounds,
             creator,
             idle: Default::default(),
             focused: Default::default(),
@@ -228,9 +237,11 @@ impl<'sdl, 'state> Widget for Button<'sdl, 'state> {
         super::checkbox::focus_press_update_implementation(
             &mut self.hovered,
             &mut self.pressed,
+            &mut self.focused_previous_frame,
             self.focus_id.0.get(),
             event,
             fun,
+            self.sounds.as_mut()
         )
     }
 
