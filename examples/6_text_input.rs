@@ -13,8 +13,7 @@ use tiny_sdl2_gui::{
         focus::{CircularUID, FocusManager, PRNGBytes, RefCircularUIDCell, UID},
         font::{FontManager, SingleLineTextRenderType, TextRenderer},
         length::{
-            AspectRatioPreferredDirection, MaxLenFailPolicy, MinLen, MinLenFailPolicy,
-            PreferredPortion,
+            AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MaxLenPolicy, MinLen, MinLenFailPolicy
         },
     },
     widget::{
@@ -191,7 +190,7 @@ fn main() -> std::process::ExitCode {
         &sdl.texture_creator,
     );
     enter_button_content.min_h = MinLen(30.);
-    enter_button_content.preferred_w = PreferredPortion::EMPTY;
+    enter_button_content.max_h = MaxLen(0.);
 
     let enter_button_style = DefaultButtonStyle {
         label: enter_button_content,
@@ -244,7 +243,7 @@ fn main() -> std::process::ExitCode {
     bottom_layout.elems.push(&mut enter_buttom);
 
     // the whole bottom part is as short as possible
-    bottom_layout.preferred_h = PreferredPortion::EMPTY;
+    bottom_layout.max_h_policy = MaxLenPolicy::Literal(MaxLen(0.));
 
     let mut bottom_border = Border::new(
         &mut bottom_layout,

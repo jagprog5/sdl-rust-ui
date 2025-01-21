@@ -11,14 +11,8 @@ use super::vertical_layout::{direction_conditional_iter_mut, MajorAxisMaxLenPoli
 pub struct HorizontalLayout<'sdl> {
     pub elems: Vec<&'sdl mut dyn Widget>,
     /// reverse the order IN TIME that elements are updated and drawn in. this
-    /// does not affect the placement of elements in space (except for errors caused
-    /// by enabling monotonic)
+    /// does not affect the placement of elements in space
     pub reverse: bool,
-    /// enable to ensure that a change in parent len will always cause the same
-    /// type of change or no change in the child len. this happens at the cost
-    /// of the entire layout not expanding to fit the entire portion of the
-    /// parent (does not correct for rounding down accumulation)
-    pub monotonic: bool,
     pub preferred_w: PreferredPortion,
     pub preferred_h: PreferredPortion,
     pub min_w_fail_policy: MinLenFailPolicy,
@@ -36,7 +30,6 @@ impl<'sdl> Default for HorizontalLayout<'sdl> {
         Self {
             elems: Default::default(),
             reverse: Default::default(),
-            monotonic: Default::default(),
             preferred_w: Default::default(),
             preferred_h: Default::default(),
             min_w_fail_policy: Default::default(),
@@ -61,7 +54,7 @@ macro_rules! impl_widget_fn {
 
             // collect info from child components
             let mut info: Vec<ChildInfo> = vec![ChildInfo::default(); self.elems.len()];
-            let mut sum_preferred_horizontal = PreferredPortion::EMPTY;
+            let mut sum_preferred_horizontal = PreferredPortion(0.);
             for (i, elem) in
                 direction_conditional_iter_mut(&mut self.elems, self.reverse).enumerate()
             {
@@ -150,18 +143,58 @@ macro_rules! impl_widget_fn {
             } else {
                 event.position.x
             };
-            let mut e_err_accumulation = 0f32;
+
+            // the position given to each child is snapped to an integer grid.
+            // in doing this, it rounds down. this accumulates an error over
+            // many elements, which would cause the overall layout to not fill
+            // its entire parent. to fix this, it distributes the error and
+            // instead rounds up sometimes
+            //
+            // the elements to round up must be chosen in a good way:  
+            // - it's monotonic. a increase or decrease in the parent will give
+            // the same or no change in each of the children
+            // - children at the minimum are kept as is to prevent some jitter
+            //   (but will be rounded up as a last resort)
+            // - maximums are respected  
+            // - it distributes the round-ups in a semi even way
+            let mut e_err_accumulation = 0.;
+            let mut indices_not_at_min: Vec<usize> = Vec::new();
+            let mut indices_at_min: Vec<usize> = Vec::new();
+
+            for (i, info) in info.iter_mut().enumerate() {
+                e_err_accumulation += info.width - info.width.floor();
+                info.width = info.width.floor();
+                if info.width <= info.min_horizontal {
+                    indices_at_min.push(i);
+                } else {
+                    indices_not_at_min.push(i);
+                }
+            }
+
+            e_err_accumulation = e_err_accumulation.round();
+            let mut e_err_accumulation = e_err_accumulation as u32;
+
+            crate::util::shuffle::shuffle(&mut indices_not_at_min, 1234);
+            crate::util::shuffle::shuffle(&mut indices_at_min, 5678);
+            indices_not_at_min.extend(indices_at_min);
+            let visit_indices = indices_not_at_min;
+
+            for visit_index in visit_indices.iter() {
+                let info = &mut info[*visit_index];
+                if e_err_accumulation < 1 {
+                    break;
+                }
+
+                if info.width + 1. <= info.max_horizontal {
+                    info.width += 1.;
+                    e_err_accumulation -= 1;
+                }
+            }
+
             for (elem, info) in
                 direction_conditional_iter_mut(&mut self.elems, self.reverse).zip(info.iter_mut())
             {
-                // handle accumulation of errors. this is needed for things to look pixel perfect with many children
-                e_err_accumulation += info.width - info.width.floor();
-                info.width = info.width.floor();
-                // this is tied to crate::util::rect::rect_position_round
-                if !self.monotonic && e_err_accumulation >= 0.5 {
-                    info.width += 1.;
-                    e_err_accumulation -= 1.;
-                }
+                
                 if self.reverse {
                     x_pos -= info.width;
                     x_pos -= horizontal_space as f32;

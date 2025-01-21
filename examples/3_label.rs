@@ -112,7 +112,6 @@ fn main() -> std::process::ExitCode {
     // ======================== BUILD GUI ======================================
 
     let mut layout = VerticalLayout::default();
-    layout.monotonic = true;
     let mut bottom_layout = HorizontalLayout::default();
 
     #[cfg(feature = "noise")]

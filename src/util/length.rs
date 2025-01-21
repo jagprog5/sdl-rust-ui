@@ -41,6 +41,7 @@ impl Default for MaxLenFailPolicy {
     }
 }
 
+/// the minimum length of a widget. has whole number resolution
 #[derive(Debug, Clone, Copy)]
 pub struct MinLen(pub f32);
 
@@ -74,6 +75,7 @@ impl Default for MinLen {
     }
 }
 
+/// the maximum length of a widget. has whole number resolution
 #[derive(Debug, Clone, Copy)]
 pub struct MaxLen(pub f32);
 
@@ -153,7 +155,6 @@ impl From<f32> for PreferredPortion {
 
 impl PreferredPortion {
     pub const FULL: PreferredPortion = PreferredPortion(1.);
-    pub const EMPTY: PreferredPortion = PreferredPortion(0.);
 
     /// this is a portion of the parent. given the parent, get the actual length to use
     pub fn get(&self, parent_len: f32) -> f32 {
@@ -170,7 +171,7 @@ impl PreferredPortion {
     ) -> f32 {
         let p = if sum_portions.0 == 0. {
             // entirely possible that each component is zero preferred portion
-            PreferredPortion::EMPTY
+            PreferredPortion(0.)
         } else {
             PreferredPortion(self.0 / sum_portions.0)
         };

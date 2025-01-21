@@ -13,3 +13,4 @@ pub mod font;
 // they are suitably specific to each widget's needs
 #[cfg(feature = "sdl2-mixer")]
 pub mod audio;
+pub(crate) mod shuffle;

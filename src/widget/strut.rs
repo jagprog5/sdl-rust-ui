@@ -18,8 +18,8 @@ impl Strut {
             min_h: MinLen(h),
             max_w: MaxLen(w),
             max_h: MaxLen(h),
-            preferred_w: PreferredPortion::EMPTY, // doesn't matter
-            preferred_h: PreferredPortion::EMPTY,
+            preferred_w: PreferredPortion(0.),
+            preferred_h: PreferredPortion(0.),
         }
     }
 
