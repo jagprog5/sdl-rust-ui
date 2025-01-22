@@ -24,8 +24,19 @@ fn main() -> std::process::ExitCode {
     const WIDTH: u32 = 300;
     const HEIGHT: u32 = 200;
 
-    let mut sdl =
-        example_common::sdl_util::SDLSystems::new("nested scroller test", (WIDTH, HEIGHT)).unwrap();
+    let sdl_context = sdl2::init().unwrap();
+    let sdl_video_subsystem = sdl_context.video().unwrap();
+    let window = sdl_video_subsystem
+        .window("nested scroller test", WIDTH, HEIGHT)
+        .resizable()
+        .position_centered()
+        .build().unwrap();
+    let mut canvas = window
+        .into_canvas()
+        .present_vsync()
+        .build().unwrap();
+    let texture_creator = canvas.texture_creator();
+    let mut event_pump = sdl_context.event_pump().unwrap();
 
     let mut focus_manager = FocusManager::default();
 
@@ -53,21 +64,21 @@ fn main() -> std::process::ExitCode {
         checkbox_focus_id,
         Box::new(DefaultCheckBoxStyle {}),
         Box::new(focus_press_sound_style),
-        &sdl.texture_creator,
+        &texture_creator,
     );
     checkbox.focus_id.single_id_loop();
 
     // pad the checkbox a little bit for clarity
     let mut checkbox_border1 = Border::new(
         &mut checkbox,
-        &sdl.texture_creator,
+        &texture_creator,
         Box::new(Empty { width: 5 }),
     );
 
     // contain the checkbox and padding in a border
     let mut checkbox_border2 = Border::new(
         &mut checkbox_border1,
-        &sdl.texture_creator,
+        &texture_creator,
         Box::new(Line::default()),
     );
 
@@ -91,7 +102,7 @@ fn main() -> std::process::ExitCode {
     // contain all of the above in a border
     let mut inner_content_border5 = Border::new(
         &mut inner_scroller4,
-        &sdl.texture_creator,
+        &texture_creator,
         Box::new(Gradient::default()),
     );
 
@@ -111,7 +122,7 @@ fn main() -> std::process::ExitCode {
     // contain all of the above in a border
     let mut outer_content_border7 = Border::new(
         &mut outer_scroller6,
-        &sdl.texture_creator,
+        &texture_creator,
         Box::new(Bevel::default()),
     );
 
@@ -125,7 +136,7 @@ fn main() -> std::process::ExitCode {
     let mut content_background9 = tiny_sdl2_gui::widget::background::SoftwareRenderBackground::new(
         &mut content_background8,
         tiny_sdl2_gui::widget::background::Smooth::fast(0),
-        &sdl.texture_creator,
+        &texture_creator,
     );
 
     #[cfg(not(feature = "noise"))]
@@ -140,7 +151,7 @@ fn main() -> std::process::ExitCode {
 
     let mut events_accumulator: Vec<SDLEvent> = Vec::new();
     'running: loop {
-        for event in sdl.event_pump.poll_iter() {
+        for event in event_pump.poll_iter() {
             match event {
                 sdl2::event::Event::Quit { .. } => {
                     break 'running;
@@ -156,20 +167,7 @@ fn main() -> std::process::ExitCode {
         if !empty {
             match update_gui(
                 &mut content_background9,
-                &mut sdl.canvas,
-                &mut events_accumulator,
-                Some(&mut focus_manager),
-            ) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
-                }
-            }
-            sdl.canvas.set_draw_color(Color::BLACK);
-            sdl.canvas.clear();
-            match draw_gui(
-                &mut content_background9,
-                &mut sdl.canvas,
+                &mut canvas,
                 &mut events_accumulator,
                 Some(&mut focus_manager),
             ) {
@@ -202,11 +200,23 @@ fn main() -> std::process::ExitCode {
                 }
             }
             events_accumulator.clear(); // clear after use
-            sdl.canvas.present();
+            
+            canvas.set_draw_color(Color::BLACK);
+            canvas.clear();
+            match draw_gui(
+                &mut content_background9,
+                &mut canvas,
+                &mut events_accumulator,
+                Some(&mut focus_manager),
+            ) {
+                Ok(()) => {}
+                Err(msg) => {
+                    debug_assert!(false, "{}", msg); // infallible in prod
+                }
+            }
+            canvas.present();
         }
 
-        // steady loop of 60 (nothing fancier is needed)
-        std::thread::sleep(std::time::Duration::new(0, 1_000_000_000u32 / 60));
     }
     std::process::ExitCode::SUCCESS
 }

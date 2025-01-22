@@ -4,7 +4,9 @@ use sdl2::{
     rect::{Point, Rect},
 };
 
-use crate::util::length::{AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy, PreferredPortion
+use crate::util::length::{
+    AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy,
+    PreferredPortion,
 };
 
 use super::widget::{Widget, WidgetEvent};
@@ -25,6 +27,9 @@ pub struct Debug {
     pub min_h_fail_policy: MinLenFailPolicy,
     pub max_h_fail_policy: MaxLenFailPolicy,
     pub preferred_link_allowed_exceed_portion: bool,
+
+    /// internal state. set during update. used during draw
+    clicked_this_frame: bool,
 }
 
 /// better name for where it isn't being used as a widget, just as a member for
@@ -46,6 +51,7 @@ impl Default for Debug {
             min_h_fail_policy: Default::default(),
             max_h_fail_policy: Default::default(),
             preferred_link_allowed_exceed_portion: Default::default(),
+            clicked_this_frame: false,
         }
     }
 }
@@ -77,7 +83,7 @@ impl Widget for Debug {
     fn preferred_link_allowed_exceed_portion(&self) -> bool {
         self.preferred_link_allowed_exceed_portion
     }
-    
+
     fn min(&mut self) -> Result<(MinLen, MinLen), String> {
         Ok((self.min_w, self.min_h))
     }
@@ -106,46 +112,36 @@ impl Widget for Debug {
         (self.preferred_w, self.preferred_h)
     }
 
-    fn preferred_width_from_height(
-        &mut self,
-        pref_h: f32,
-    ) -> Option<Result<f32, String>> {
+    fn preferred_width_from_height(&mut self, pref_h: f32) -> Option<Result<f32, String>> {
         let ratio = match &self.aspect_ratio {
             None => return None,
             Some(v) => v,
         };
 
         Some(Ok(AspectRatioPreferredDirection::width_from_height(
-            *ratio,
-            pref_h,
+            *ratio, pref_h,
         )))
     }
 
-    fn preferred_height_from_width(
-        &mut self,
-        pref_w: f32,
-    ) -> Option<Result<f32, String>> {
+    fn preferred_height_from_width(&mut self, pref_w: f32) -> Option<Result<f32, String>> {
         let ratio = match &self.aspect_ratio {
             None => return None,
             Some(v) => v,
         };
 
         Some(Ok(AspectRatioPreferredDirection::height_from_width(
-            *ratio,
-            pref_w,
+            *ratio, pref_w,
         )))
     }
 
-    fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
-        // as always, snap to integer grid before rendering / using,
-        // plus checks that draw area is non-zero
+    fn update(&mut self, event: WidgetEvent) -> Result<(), String> {
+        self.clicked_this_frame = false; // reset each frame
         let pos: Option<sdl2::rect::Rect> = event.position.into();
         let pos = match pos {
             Some(v) => v,
-            None => return Ok(()),
+            None => return Ok(()), // only functionality is being clicked
         };
 
-        let mut color_to_use = Color::RED;
 
         for e in event.events.iter_mut().filter(|e| e.available()) {
             match e.e {
@@ -153,8 +149,12 @@ impl Widget for Debug {
                     x,
                     y,
                     mouse_btn: MouseButton::Left,
+                    window_id,
                     ..
                 } => {
+                    if event.canvas.window().id() != window_id {
+                        continue; // not for me!
+                    }
                     if pos.contains_point((x, y)) {
                         // ignore mouse events out of scroll area
                         let point_contained_in_clipping_rect = match event.canvas.clip_rect() {
@@ -167,12 +167,29 @@ impl Widget for Debug {
                         }
 
                         e.set_consumed();
-                        color_to_use = Color::GREEN;
-                        println!("debug rect at {:?} was clicked!", pos);
+                        self.clicked_this_frame = true;
                     }
                 }
                 _ => {}
             }
+        }
+
+        Ok(())
+    }
+
+    fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
+        // as always, snap to integer grid before rendering / using,
+        // plus checks that draw area is non-zero
+        let pos: Option<sdl2::rect::Rect> = event.position.into();
+        let pos = match pos {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+
+        let mut color_to_use = Color::RED;
+        if self.clicked_this_frame {
+            color_to_use = Color::GREEN;
+            println!("debug rect at {:?} was clicked!", pos);
         }
 
         debug_rect_outline(color_to_use, pos, event.canvas)

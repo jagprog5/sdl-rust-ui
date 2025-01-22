@@ -60,12 +60,23 @@ fn main() -> std::process::ExitCode {
         std::time::Duration::from_secs(30),
     )));
 
-    let mut sdl =
-        example_common::sdl_util::SDLSystems::new("text input test", (WIDTH, HEIGHT)).unwrap();
+    let sdl_context = sdl2::init().unwrap();
+    let sdl_video_subsystem = sdl_context.video().unwrap();
+    let window = sdl_video_subsystem
+        .window("text input test", WIDTH, HEIGHT)
+        .resizable()
+        .position_centered()
+        .build().unwrap();
+    let mut canvas = window
+        .into_canvas()
+        .present_vsync()
+        .build().unwrap();
+    let texture_creator = canvas.texture_creator();
+    let mut event_pump = sdl_context.event_pump().unwrap();
 
     // audio specific stuff. taking same values from rust-sdl2 examples
     #[cfg(feature = "sdl2-mixer")]
-    let _audio = sdl.sdl_context.audio().unwrap();
+    let _audio = sdl_context.audio().unwrap();
     #[cfg(feature = "sdl2-mixer")]
     sdl2::mixer::open_audio(
         44_100,
@@ -119,7 +130,7 @@ fn main() -> std::process::ExitCode {
         20,
         Color::WHITE,
         Box::new(TextRenderer::new(&font_manager)),
-        &sdl.texture_creator,
+        &texture_creator,
     );
     // put at the bottom and cut off the top if too small
     text_display.max_h_policy = MaxLenFailPolicy::POSITIVE;
@@ -162,7 +173,7 @@ fn main() -> std::process::ExitCode {
         &text_str,
         SingleLineTextRenderType::Blended(Color::WHITE),
         Box::new(TextRenderer::new(&font_manager)),
-        &sdl.texture_creator,
+        &texture_creator,
     );
 
     let text_entered_functionality = || {
@@ -187,7 +198,7 @@ fn main() -> std::process::ExitCode {
         &binding,
         SingleLineTextRenderType::Blended(Color::WHITE),
         Box::new(TextRenderer::new(&font_manager)),
-        &sdl.texture_creator,
+        &texture_creator,
     );
     enter_button_content.min_h = MinLen(30.);
     enter_button_content.max_h = MaxLen(0.);
@@ -217,25 +228,25 @@ fn main() -> std::process::ExitCode {
             .set_before(&text_input.focus_id),
         Box::new(enter_button_style),
         Box::new(focus_press_sound_style),
-        &sdl.texture_creator,
+        &texture_creator,
     );
     enter_button.focus_id.set_after(&mut text_input.focus_id);
     enter_button.focus_id.set_before(&mut text_input.focus_id);
 
     let mut text_input = Border::new(
         &mut text_input,
-        &sdl.texture_creator,
+        &texture_creator,
         Box::new(Empty { width: 2 }),
     );
 
     let mut enter_buttom = Border::new(
         &mut enter_button,
-        &sdl.texture_creator,
+        &texture_creator,
         Box::new(Empty { width: 2 }),
     );
     let mut enter_buttom = Border::new(
         &mut enter_buttom,
-        &sdl.texture_creator,
+        &texture_creator,
         Box::new(Bevel::default()),
     );
 
@@ -247,7 +258,7 @@ fn main() -> std::process::ExitCode {
 
     let mut bottom_border = Border::new(
         &mut bottom_layout,
-        &sdl.texture_creator,
+        &texture_creator,
         Box::new(Gradient::default()),
     );
 
@@ -255,7 +266,7 @@ fn main() -> std::process::ExitCode {
 
     let mut events_accumulator: Vec<SDLEvent> = Vec::new();
     'running: loop {
-        for event in sdl.event_pump.poll_iter() {
+        for event in event_pump.poll_iter() {
             match event {
                 sdl2::event::Event::Quit { .. } => {
                     break 'running;
@@ -271,20 +282,7 @@ fn main() -> std::process::ExitCode {
         if !empty {
             match update_gui(
                 &mut layout,
-                &mut sdl.canvas,
-                &mut events_accumulator,
-                Some(&mut focus_manager),
-            ) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
-                }
-            }
-            sdl.canvas.set_draw_color(Color::BLACK);
-            sdl.canvas.clear();
-            match draw_gui(
-                &mut layout,
-                &mut sdl.canvas,
+                &mut canvas,
                 &mut events_accumulator,
                 Some(&mut focus_manager),
             ) {
@@ -317,11 +315,23 @@ fn main() -> std::process::ExitCode {
                 }
             }
             events_accumulator.clear(); // clear after use
-            sdl.canvas.present();
+            
+            canvas.set_draw_color(Color::BLACK);
+            canvas.clear();
+            match draw_gui(
+                &mut layout,
+                &mut canvas,
+                &mut events_accumulator,
+                Some(&mut focus_manager),
+            ) {
+                Ok(()) => {}
+                Err(msg) => {
+                    debug_assert!(false, "{}", msg); // infallible in prod
+                }
+            }
+            canvas.present();
         }
 
-        // steady loop of 60 (nothing fancier is needed)
-        std::thread::sleep(std::time::Duration::new(0, 1_000_000_000u32 / 60));
     }
     std::process::ExitCode::SUCCESS
 }

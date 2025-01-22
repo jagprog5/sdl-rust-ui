@@ -224,7 +224,10 @@ impl FocusManager {
                 }
                 event.focus_manager.0 = None; // unfocus
             }
-            sdl2::event::Event::MouseMotion { x, y, .. } => {
+            sdl2::event::Event::MouseMotion { x, y, window_id, .. } => {
+                if event.canvas.window().id() != window_id {
+                    return; // not for me!
+                }
                 let position: Option<sdl2::rect::Rect> = event.position.into();
                 if let Some(position) = position {
                     if point_in_position_and_clipping_rect(x, y, position, event.canvas.clip_rect()) {

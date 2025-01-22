@@ -15,17 +15,22 @@ fn main() -> std::process::ExitCode {
     const WIDTH: u32 = 400;
     const HEIGHT: u32 = 400;
 
-    let mut sdl = match example_common::sdl_util::SDLSystems::new("border", (WIDTH, HEIGHT)) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("{}", e.to_string());
-            return std::process::ExitCode::FAILURE;
-        }
-    };
+    let sdl_context = sdl2::init().unwrap();
+    let sdl_video_subsystem = sdl_context.video().unwrap();
+    let window = sdl_video_subsystem
+        .window("border", WIDTH, HEIGHT)
+        .resizable()
+        .position_centered()
+        .build().unwrap();
+    let mut canvas = window
+        .into_canvas()
+        .present_vsync()
+        .build().unwrap();
+    let texture_creator = canvas.texture_creator();
+    let mut event_pump = sdl_context.event_pump().unwrap();
 
     let surface = fancy_surface::and();
-    let texture = sdl
-        .texture_creator
+    let texture = texture_creator
         .create_texture_from_surface(surface)
         .expect("err create texture");
     let mut texture_widget = Texture::new(&texture);
@@ -36,11 +41,11 @@ fn main() -> std::process::ExitCode {
 
     let mut bevel = Bevel::default();
     bevel.width = 10;
-    let mut border = Border::new(&mut texture_widget, &sdl.texture_creator, Box::new(bevel));
+    let mut border = Border::new(&mut texture_widget, &texture_creator, Box::new(bevel));
 
     let mut events_accumulator: Vec<SDLEvent> = Vec::new();
     'running: loop {
-        for event in sdl.event_pump.poll_iter() {
+        for event in event_pump.poll_iter() {
             match event {
                 sdl2::event::Event::Quit { .. } => {
                     break 'running;
@@ -54,16 +59,7 @@ fn main() -> std::process::ExitCode {
         let empty = events_accumulator.len() == 0; // lower cpu usage when idle
 
         if !empty {
-            match update_gui(&mut border, &mut sdl.canvas, &mut events_accumulator, None) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
-                }
-            }
-            // set background black
-            sdl.canvas.set_draw_color(sdl2::pixels::Color::BLACK);
-            sdl.canvas.clear();
-            match draw_gui(&mut border, &mut sdl.canvas, &mut events_accumulator, None) {
+            match update_gui(&mut border, &mut canvas, &mut events_accumulator, None) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
@@ -87,11 +83,19 @@ fn main() -> std::process::ExitCode {
                 }
             }
             events_accumulator.clear(); // clear after use
-            sdl.canvas.present();
+            
+            // set background black
+            canvas.set_draw_color(sdl2::pixels::Color::BLACK);
+            canvas.clear();
+            match draw_gui(&mut border, &mut canvas, &mut events_accumulator, None) {
+                Ok(()) => {}
+                Err(msg) => {
+                    debug_assert!(false, "{}", msg); // infallible in prod
+                }
+            }
+            canvas.present();
         }
 
-        // steady loop of 60 (nothing fancier is needed)
-        std::thread::sleep(std::time::Duration::new(0, 1_000_000_000u32 / 60));
     }
     std::process::ExitCode::SUCCESS
 }

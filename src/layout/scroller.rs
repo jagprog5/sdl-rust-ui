@@ -1,6 +1,9 @@
 use std::cell::Cell;
 
-use sdl2::mouse::{MouseButton, SystemCursor};
+use sdl2::{
+    event::WindowEvent,
+    mouse::{MouseButton, SystemCursor},
+};
 
 use crate::{
     util::{length::AspectRatioPreferredDirection, rect::FRect},
@@ -381,8 +384,9 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
         };
 
         if self.restrict_scroll {
-            // restrict here to catch all from previous frame. e.g. if the
-            // window is resized to be smaller so it's no longer within bounds
+            // restrict here to catch all from previous frame or previous within
+            // this frame. e.g. if the window is resized to be smaller so it's
+            // no longer within bounds
             apply_scroll_restrictions(
                 position_for_contained,
                 event.position,
@@ -423,8 +427,12 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                     mouse_x,
                     mouse_y,
                     direction,
+                    window_id,
                     ..
                 } => {
+                    if event.canvas.window().id() != window_id {
+                        return; // not for me!
+                    }
                     let mut multiplier: i32 = match direction {
                         sdl2::mouse::MouseWheelDirection::Flipped => -1,
                         _ => 1,
@@ -465,12 +473,38 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                         }
                     }
                 }
+                sdl2::event::Event::Window {
+                    win_event,
+                    ..
+                } => {
+                    match win_event {
+                        WindowEvent::Hidden |
+                        WindowEvent::Minimized |
+                        WindowEvent::Leave |
+                        WindowEvent::FocusLost |
+                        WindowEvent::Close => {
+                            // same functionality as below for mouse button up,
+                            // but don't consume the event
+                            self.drag_state = DragState::None;
+                            if self.restrict_scroll {
+                                apply_scroll_restrictions(
+                                    position_for_contained,
+                                    event.position,
+                                    &mut scroll_y,
+                                    &mut scroll_x,
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 sdl2::event::Event::MouseButtonUp {
                     mouse_btn: MouseButton::Left,
                     ..
                 } => match self.drag_state {
                     DragState::None => {}
                     _ => {
+                        // reset, regardless mouse position
                         self.drag_state = DragState::None;
                         e.set_consumed_by_layout();
                         if self.restrict_scroll {
@@ -488,8 +522,12 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                     mouse_btn: MouseButton::Left,
                     x,
                     y,
+                    window_id,
                     ..
                 } => {
+                    if event.canvas.window().id() != window_id {
+                        return; // not for me!
+                    }
                     let pos: Option<sdl2::rect::Rect> = event.position.into();
                     if pos.map(|pos| pos.contains_point((x, y))).unwrap_or(false) {
                         let point_contained_in_clipping_rect = match clipping_rect {
@@ -508,15 +546,30 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                 }
                 // on mouse motion apply mouse drag.
                 sdl2::event::Event::MouseMotion {
-                    x, y, mousestate, ..
+                    x,
+                    y,
+                    mousestate,
+                    window_id,
+                    ..
                 } => {
                     if !mousestate.left() {
                         self.drag_state = DragState::None;
-                        // intentional fallthrough
+                        // if mouse motion is detected and the left mouse button
+                        // isn't pressed down, regardless of position or window,
+                        // then clear the drag state
+                        //
+                        // intentional fallthrough.
                     }
                     if let DragState::None = self.drag_state {
                         return;
                     }
+                    if event.canvas.window().id() != window_id {
+                        // ignore drag through windows. this would only make
+                        // sense if there was some relative coordinate system,
+                        // which I don't plan on doing
+                        return;
+                    }
+                    e.set_consumed_by_layout();
                     if let DragState::DragStart((start_x, start_y)) = self.drag_state {
                         let dragged_far_enough_x = (start_x - x).abs() as u32 > self.drag_deadzone;
                         let dragged_far_enough_y = (start_y - y).abs() as u32 > self.drag_deadzone;
@@ -529,7 +582,6 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                     }
 
                     if let DragState::Dragging((drag_x, drag_y)) = self.drag_state {
-                        e.set_consumed_by_layout();
                         if self.scroll_x_enabled {
                             scroll_x = x - drag_x;
                         }

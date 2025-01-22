@@ -25,8 +25,21 @@ fn main() -> std::process::ExitCode {
     const WIDTH: u32 = 800;
     const HEIGHT: u32 = 600;
 
-    let mut sdl = example_common::sdl_util::SDLSystems::new("labels", (WIDTH, HEIGHT)).unwrap();
-    let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string()).unwrap();
+    let sdl_context = sdl2::init().unwrap();
+    let sdl_video_subsystem = sdl_context.video().unwrap();
+    let window = sdl_video_subsystem
+        .window("labels", WIDTH, HEIGHT)
+        .resizable()
+        .position_centered()
+        .build().unwrap();
+    let mut canvas = window
+        .into_canvas()
+        .present_vsync()
+        .build().unwrap();
+    let texture_creator = canvas.texture_creator();
+    let mut event_pump = sdl_context.event_pump().unwrap();
+
+    let ttf_context = sdl2::ttf::init().unwrap();
 
     let mut font_file = File::open(
         Path::new(".")
@@ -51,7 +64,7 @@ fn main() -> std::process::ExitCode {
         &top_label_text,
         SingleLineTextRenderType::Blended(Color::WHITE),
         Box::new(TextRenderer::new(&font_manager)),
-        &sdl.texture_creator,
+        &texture_creator,
     );
 
     top_label.min_h_fail_policy = MinLenFailPolicy::NEGATIVE; // go up if too small
@@ -69,7 +82,7 @@ fn main() -> std::process::ExitCode {
         &middle_label_text,
         SingleLineTextRenderType::Shaded(Color::WHITE, Color::GRAY),
         Box::new(TextRenderer::new(&font_manager)),
-        &sdl.texture_creator,
+        &texture_creator,
     );
     middle_label.request_aspect_ratio = false;
 
@@ -80,7 +93,7 @@ fn main() -> std::process::ExitCode {
         &bottom_left_label_text,
         SingleLineTextRenderType::Blended(Color::WHITE),
         Box::new(TextRenderer::new(&font_manager)),
-        &sdl.texture_creator,
+        &texture_creator,
     );
 
     let bottom_right_label_text = CompactString::from("horizontal2q|");
@@ -88,7 +101,7 @@ fn main() -> std::process::ExitCode {
         &bottom_right_label_text,
         SingleLineTextRenderType::Blended(Color::WHITE),
         Box::new(TextRenderer::new(&font_manager)),
-        &sdl.texture_creator,
+        &texture_creator,
     );
     bottom_right_label.min_h_fail_policy = MinLenFailPolicy::NEGATIVE;
     bottom_right_label.min_h = MinLen(50.); // for testing
@@ -104,7 +117,7 @@ fn main() -> std::process::ExitCode {
         20,
         Color::WHITE,
         Box::new(TextRenderer::new(&font_manager)),
-        &sdl.texture_creator,
+        &texture_creator,
     );
     multiline_widget.min_h_policy = MultiLineMinHeightFailPolicy::CutOff(1.0);
     multiline_widget.max_h_policy = MaxLenFailPolicy::NEGATIVE;
@@ -122,7 +135,7 @@ fn main() -> std::process::ExitCode {
     let mut top = tiny_sdl2_gui::widget::background::SoftwareRenderBackground::new(
         &mut top_label,
         tiny_sdl2_gui::widget::background::Wood::new(random_number),
-        &sdl.texture_creator,
+        &texture_creator,
     );
     #[cfg(feature = "noise")]
     top.set_color_mod((200, 200, 200)); // dim a bit
@@ -145,11 +158,11 @@ fn main() -> std::process::ExitCode {
 
     let mut events_accumulator: Vec<SDLEvent> = Vec::new();
     'running: loop {
-        let label_str = format!("{:?}", sdl.canvas.output_size().unwrap());
+        let label_str = format!("{:?}", canvas.output_size().unwrap());
         let label_str = CompactString::from(label_str);
         top_label_text.inner.set(label_str);
 
-        for event in sdl.event_pump.poll_iter() {
+        for event in event_pump.poll_iter() {
             match event {
                 sdl2::event::Event::Quit { .. } => {
                     break 'running;
@@ -163,15 +176,7 @@ fn main() -> std::process::ExitCode {
         let empty = events_accumulator.len() == 0; // lower cpu usage when idle
 
         if !empty {
-            match update_gui(&mut layout, &mut sdl.canvas, &mut events_accumulator, None) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
-                }
-            }
-            sdl.canvas.set_draw_color(sdl2::pixels::Color::BLACK);
-            sdl.canvas.clear();
-            match draw_gui(&mut layout, &mut sdl.canvas, &mut events_accumulator, None) {
+            match update_gui(&mut layout, &mut canvas, &mut events_accumulator, None) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
@@ -195,11 +200,18 @@ fn main() -> std::process::ExitCode {
                 }
             }
             events_accumulator.clear(); // clear after use
-            sdl.canvas.present();
+            
+            canvas.set_draw_color(sdl2::pixels::Color::BLACK);
+            canvas.clear();
+            match draw_gui(&mut layout, &mut canvas, &mut events_accumulator, None) {
+                Ok(()) => {}
+                Err(msg) => {
+                    debug_assert!(false, "{}", msg); // infallible in prod
+                }
+            }
+            canvas.present();
         }
 
-        // steady loop of 60 (nothing fancier is needed)
-        std::thread::sleep(std::time::Duration::new(0, 1_000_000_000u32 / 60));
     }
     std::process::ExitCode::SUCCESS
 }

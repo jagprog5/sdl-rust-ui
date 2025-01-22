@@ -504,8 +504,11 @@ where
             //   haven't been consumed is good enough)
             // - sets focus to current widget when consumed
             sdl2::event::Event::MouseMotion {
-                mousestate, x, y, ..
+                mousestate, x, y, window_id, ..
             } => {
+                if window_id != event.canvas.window().id() {
+                    continue; // not for me!
+                }
                 let position: Option<sdl2::rect::Rect> = event.position.into();
                 if let Some(position) = position {
                     if point_in_position_and_clipping_rect(x, y, position, event.canvas.clip_rect())
@@ -538,8 +541,12 @@ where
                 mouse_btn: MouseButton::Left,
                 x,
                 y,
+                window_id,
                 ..
             } => {
+                if window_id != event.canvas.window().id() {
+                    continue; // not for me!
+                }
                 let position: Option<sdl2::rect::Rect> = event.position.into();
                 if let Some(position) = position {
                     if point_in_position_and_clipping_rect(x, y, position, event.canvas.clip_rect())
@@ -560,8 +567,12 @@ where
                 mouse_btn: MouseButton::Left,
                 x,
                 y,
+                window_id,
                 ..
             } => {
+                if window_id != event.canvas.window().id() {
+                    continue; // not for me!
+                }
                 // ok even if not focused (button click works even if no
                 // focus manager is used at all)
                 let position: Option<sdl2::rect::Rect> = event.position.into();

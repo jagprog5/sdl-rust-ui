@@ -16,18 +16,19 @@ fn main() -> std::process::ExitCode {
     const WIDTH: u32 = 256 * 4;
     const HEIGHT: u32 = 256;
 
-    let mut sdl = match example_common::sdl_util::SDLSystems::new(
-        "left three are aspect ratio failures. last one requests aspect ratio",
-        (WIDTH, HEIGHT),
-    ) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("{}", e.to_string());
-            return std::process::ExitCode::FAILURE;
-        }
-    };
-
-    let texture_creator = sdl.canvas.texture_creator();
+    let sdl_context = sdl2::init().unwrap();
+    let sdl_video_subsystem = sdl_context.video().unwrap();
+    let window = sdl_video_subsystem
+        .window("left three are aspect ratio failures. last one requests aspect ratio", WIDTH, HEIGHT)
+        .resizable()
+        .position_centered()
+        .build().unwrap();
+    let mut canvas = window
+        .into_canvas()
+        .present_vsync()
+        .build().unwrap();
+    let texture_creator = canvas.texture_creator();
+    let mut event_pump = sdl_context.event_pump().unwrap();
 
     let surface = fancy_surface::mul_mod();
 
@@ -99,7 +100,7 @@ fn main() -> std::process::ExitCode {
 
     let mut events_accumulator: Vec<SDLEvent> = Vec::new();
     'running: loop {
-        for event in sdl.event_pump.poll_iter() {
+        for event in event_pump.poll_iter() {
             match event {
                 sdl2::event::Event::Quit { .. } => {
                     break 'running;
@@ -115,21 +116,7 @@ fn main() -> std::process::ExitCode {
         if !empty {
             match update_gui(
                 &mut horizontal_layout,
-                &mut sdl.canvas,
-                &mut events_accumulator,
-                None,
-            ) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
-                }
-            }
-            // set background black
-            sdl.canvas.set_draw_color(sdl2::pixels::Color::BLACK);
-            sdl.canvas.clear();
-            match draw_gui(
-                &mut horizontal_layout,
-                &mut sdl.canvas,
+                &mut canvas,
                 &mut events_accumulator,
                 None,
             ) {
@@ -156,11 +143,24 @@ fn main() -> std::process::ExitCode {
                 }
             }
             events_accumulator.clear(); // clear after use
-            sdl.canvas.present();
+            
+            // set background black
+            canvas.set_draw_color(sdl2::pixels::Color::BLACK);
+            canvas.clear();
+            match draw_gui(
+                &mut horizontal_layout,
+                &mut canvas,
+                &mut events_accumulator,
+                None,
+            ) {
+                Ok(()) => {}
+                Err(msg) => {
+                    debug_assert!(false, "{}", msg); // infallible in prod
+                }
+            }
+            canvas.present();
         }
 
-        // steady loop of 60 (nothing fancier is needed)
-        std::thread::sleep(std::time::Duration::new(0, 1_000_000_000u32 / 60));
     }
     std::process::ExitCode::SUCCESS
 }

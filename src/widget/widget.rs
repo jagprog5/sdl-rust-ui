@@ -8,6 +8,10 @@ use crate::util::{
     }, rect::FRect, rust::reborrow,
 };
 
+/// two purposes:
+///  - used to indicate which events were not used by the UI and should be
+///    passed down to the rest of the application
+///  - used to ensure that a single widget uses an event
 #[derive(Debug, Clone, Copy)]
 pub enum ConsumedStatus {
     /// this event has not been consumed by any widget
@@ -15,7 +19,12 @@ pub enum ConsumedStatus {
 
     /// this event has been consumed by a non-layout widget. for the most part,
     /// it should be considered consumed, but it might still be used by layouts
-    /// (e.g. scroller)
+    /// (e.g. scroller). this distinction was required for nested scroll widgets
+    /// to work (a scroller's contained widget is given the opportunity to
+    /// consume events first. that way an inner scroller can consume some scroll
+    /// amount before the outer scroller. but if the child is instead something
+    /// else which would consume events and prevent a scroll, then it is
+    /// ignored)
     ConsumedByWidget,
 
     /// this event has been consumed by a layout, and should not be used by

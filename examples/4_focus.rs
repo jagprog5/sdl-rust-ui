@@ -55,12 +55,23 @@ fn main() -> std::process::ExitCode {
         .join("assets")
         .join("press_sound.mp3");
 
-    let mut sdl =
-        example_common::sdl_util::SDLSystems::new("shift tab! mouse!", (WIDTH, HEIGHT)).unwrap();
+    let sdl_context = sdl2::init().unwrap();
+    let sdl_video_subsystem = sdl_context.video().unwrap();
+    let window = sdl_video_subsystem
+        .window("shift tab! mouse!", WIDTH, HEIGHT)
+        .resizable()
+        .position_centered()
+        .build().unwrap();
+    let mut canvas = window
+        .into_canvas()
+        .present_vsync()
+        .build().unwrap();
+    let texture_creator = canvas.texture_creator();
+    let mut event_pump = sdl_context.event_pump().unwrap();
 
     // audio specific stuff. taking same values from rust-sdl2 examples
     #[cfg(feature = "sdl2-mixer")]
-    let _audio = sdl.sdl_context.audio().unwrap();
+    let _audio = sdl_context.audio().unwrap();
     #[cfg(feature = "sdl2-mixer")]
     sdl2::mixer::open_audio(44_100, sdl2::mixer::AUDIO_S16LSB, sdl2::mixer::DEFAULT_CHANNELS, 1_024).unwrap();
     #[cfg(feature = "sdl2-mixer")]
@@ -77,7 +88,7 @@ fn main() -> std::process::ExitCode {
         &button_text,
         SingleLineTextRenderType::Blended(Color::WHITE),
         Box::new(TextRenderer::new(&font_manager)),
-        &sdl.texture_creator,
+        &texture_creator,
     );
     let button_style = DefaultButtonStyle {
         label: button_label,
@@ -124,7 +135,7 @@ fn main() -> std::process::ExitCode {
         RefCircularUIDCell(&checkbox0_focus_id),
         Box::new(DefaultCheckBoxStyle {}),
         Box::new(focus_press_sound_style.clone()),
-        &sdl.texture_creator,
+        &texture_creator,
     );
 
     let binding = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
@@ -133,7 +144,7 @@ fn main() -> std::process::ExitCode {
         *RefCircularUIDCell(&binding).set_after(&checkbox0.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
         Box::new(focus_press_sound_style.clone()),
-        &sdl.texture_creator,
+        &texture_creator,
     );
 
     let binding = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
@@ -142,7 +153,7 @@ fn main() -> std::process::ExitCode {
         *RefCircularUIDCell(&binding).set_after(&checkbox1.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
         Box::new(focus_press_sound_style.clone()),
-        &sdl.texture_creator,
+        &texture_creator,
     );
 
     let binding = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
@@ -151,7 +162,7 @@ fn main() -> std::process::ExitCode {
         *RefCircularUIDCell(&binding).set_after(&checkbox2.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
         Box::new(focus_press_sound_style.clone()),
-        &sdl.texture_creator,
+        &texture_creator,
     );
 
     let binding = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
@@ -160,7 +171,7 @@ fn main() -> std::process::ExitCode {
         *RefCircularUIDCell(&binding).set_after(&checkbox3.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
         Box::new(focus_press_sound_style.clone()),
-        &sdl.texture_creator,
+        &texture_creator,
     );
 
     let checkbox5_focus_id = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
@@ -169,7 +180,7 @@ fn main() -> std::process::ExitCode {
         *RefCircularUIDCell(&checkbox5_focus_id).set_after(&checkbox4.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
         Box::new(focus_press_sound_style.clone()),
-        &sdl.texture_creator,
+        &texture_creator,
     );
 
     let button_focus_id = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
@@ -186,7 +197,7 @@ fn main() -> std::process::ExitCode {
         RefCircularUIDCell(&button_focus_id),
         Box::new(button_style),
         Box::new(focus_press_sound_style.clone()),
-        &sdl.texture_creator,
+        &texture_creator,
     );
 
     top_layout.elems.push(&mut checkbox0);
@@ -215,7 +226,7 @@ fn main() -> std::process::ExitCode {
 
     let mut events_accumulator: Vec<SDLEvent> = Vec::new();
     'running: loop {
-        for event in sdl.event_pump.poll_iter() {
+        for event in event_pump.poll_iter() {
             match event {
                 sdl2::event::Event::Quit { .. } => {
                     break 'running;
@@ -231,20 +242,7 @@ fn main() -> std::process::ExitCode {
         if !empty {
             match update_gui(
                 &mut layout,
-                &mut sdl.canvas,
-                &mut events_accumulator,
-                Some(&mut focus_manager),
-            ) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
-                }
-            }
-            sdl.canvas.set_draw_color(background_color.get());
-            sdl.canvas.clear();
-            match draw_gui(
-                &mut layout,
-                &mut sdl.canvas,
+                &mut canvas,
                 &mut events_accumulator,
                 Some(&mut focus_manager),
             ) {
@@ -274,13 +272,24 @@ fn main() -> std::process::ExitCode {
                     _ => {}
                 }
             }
-
             events_accumulator.clear(); // clear after use
-            sdl.canvas.present();
+
+            canvas.set_draw_color(background_color.get());
+            canvas.clear();
+            match draw_gui(
+                &mut layout,
+                &mut canvas,
+                &mut events_accumulator,
+                Some(&mut focus_manager),
+            ) {
+                Ok(()) => {}
+                Err(msg) => {
+                    debug_assert!(false, "{}", msg); // infallible in prod
+                }
+            }
+            canvas.present();
         }
 
-        // steady loop of 60 (nothing fancier is needed)
-        std::thread::sleep(std::time::Duration::new(0, 1_000_000_000u32 / 60));
     }
     std::process::ExitCode::SUCCESS
 }
