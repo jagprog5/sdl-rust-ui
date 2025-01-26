@@ -4,7 +4,9 @@ use sdl2::surface::Surface;
 #[allow(dead_code)]
 pub fn mul_mod() -> Surface<'static> {
     let mut surface = Surface::new(256, 256, sdl2::pixels::PixelFormatEnum::ARGB8888).unwrap();
-    surface.set_blend_mode(sdl2::render::BlendMode::None).unwrap();
+    surface
+        .set_blend_mode(sdl2::render::BlendMode::None)
+        .unwrap();
     surface.with_lock_mut(|buffer| {
         for x in 0i32..256 {
             for y in 0i32..256 {

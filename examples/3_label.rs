@@ -14,7 +14,7 @@ use tiny_sdl2_gui::{
         multi_line_label::{MultiLineLabel, MultiLineMinHeightFailPolicy},
         single_line_label::{DefaultSingleLineLabelState, SingleLineLabel},
         texture::AspectRatioFailPolicy,
-        widget::{draw_gui, update_gui, SDLEvent},
+        update_gui, SDLEvent, Widget,
     },
 };
 
@@ -31,11 +31,9 @@ fn main() -> std::process::ExitCode {
         .window("labels", WIDTH, HEIGHT)
         .resizable()
         .position_centered()
-        .build().unwrap();
-    let mut canvas = window
-        .into_canvas()
-        .present_vsync()
-        .build().unwrap();
+        .build()
+        .unwrap();
+    let mut canvas = window.into_canvas().present_vsync().build().unwrap();
     let texture_creator = canvas.texture_creator();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
@@ -173,37 +171,35 @@ fn main() -> std::process::ExitCode {
             }
         }
 
-        let empty = events_accumulator.len() == 0; // lower cpu usage when idle
+        let empty = events_accumulator.is_empty(); // lower cpu usage when idle
 
         if !empty {
-            match update_gui(&mut layout, &mut canvas, &mut events_accumulator, None) {
+            match update_gui(&mut layout, &mut events_accumulator, None, &canvas) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
-            }
+            };
+
             for e in events_accumulator.iter_mut().filter(|e| e.available()) {
-                match e.e {
-                    sdl2::event::Event::KeyDown {
+                if let sdl2::event::Event::KeyDown {
                         keycode: Some(sdl2::keyboard::Keycode::Escape),
                         repeat,
                         ..
-                    } => {
-                        // if unprocessed escape key
-                        e.set_consumed(); // intentional redundant
-                        if repeat {
-                            continue;
-                        }
-                        break 'running;
+                    } = e.e {
+                    // if unprocessed escape key
+                    e.set_consumed(); // intentional redundant
+                    if repeat {
+                        continue;
                     }
-                    _ => {}
+                    break 'running;
                 }
             }
             events_accumulator.clear(); // clear after use
-            
+
             canvas.set_draw_color(sdl2::pixels::Color::BLACK);
             canvas.clear();
-            match draw_gui(&mut layout, &mut canvas, &mut events_accumulator, None) {
+            match layout.draw(&mut canvas, None) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
@@ -211,7 +207,6 @@ fn main() -> std::process::ExitCode {
             }
             canvas.present();
         }
-
     }
     std::process::ExitCode::SUCCESS
 }

@@ -13,7 +13,8 @@ use tiny_sdl2_gui::{
         focus::{CircularUID, FocusManager, PRNGBytes, RefCircularUIDCell, UID},
         font::{FontManager, SingleLineTextRenderType, TextRenderer},
         length::{
-            AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MaxLenPolicy, MinLen, MinLenFailPolicy
+            AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MaxLenPolicy, MinLen,
+            MinLenFailPolicy,
         },
     },
     widget::{
@@ -26,7 +27,7 @@ use tiny_sdl2_gui::{
             DefaultSingleLineEditStyle, DefaultSingleLineTextEditState, SingleLineTextEditState,
             SingleLineTextInput,
         },
-        widget::{draw_gui, update_gui, SDLEvent},
+        update_gui, SDLEvent, Widget,
     },
 };
 
@@ -66,11 +67,9 @@ fn main() -> std::process::ExitCode {
         .window("text input test", WIDTH, HEIGHT)
         .resizable()
         .position_centered()
-        .build().unwrap();
-    let mut canvas = window
-        .into_canvas()
-        .present_vsync()
-        .build().unwrap();
+        .build()
+        .unwrap();
+    let mut canvas = window.into_canvas().present_vsync().build().unwrap();
     let texture_creator = canvas.texture_creator();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
@@ -178,7 +177,7 @@ fn main() -> std::process::ExitCode {
 
     let text_entered_functionality = || {
         let text_content = text_str.get();
-        if text_content.len() == 0 {
+        if text_content.is_empty() {
             return Ok(());
         }
         text_str.set("".into());
@@ -222,7 +221,7 @@ fn main() -> std::process::ExitCode {
         tiny_sdl2_gui::widget::checkbox::EmptyFocusPressWidgetSoundStyle {};
 
     let mut enter_button = Button::new(
-        Box::new(|| text_entered_functionality()),
+        Box::new(text_entered_functionality),
         *RefCircularUIDCell(&enter_button_focus_id)
             .set_after(&text_input.focus_id)
             .set_before(&text_input.focus_id),
@@ -277,20 +276,20 @@ fn main() -> std::process::ExitCode {
             }
         }
 
-        let empty = events_accumulator.len() == 0; // lower cpu usage when idle
+        let empty = events_accumulator.is_empty(); // lower cpu usage when idle
 
         if !empty {
             match update_gui(
                 &mut layout,
-                &mut canvas,
                 &mut events_accumulator,
                 Some(&mut focus_manager),
+                &canvas,
             ) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
-            }
+            };
             FocusManager::default_start_focus_behavior(
                 &mut focus_manager,
                 &mut events_accumulator,
@@ -298,32 +297,24 @@ fn main() -> std::process::ExitCode {
                 enter_button_focus_id.get().uid(),
             );
             for e in events_accumulator.iter_mut().filter(|e| e.available()) {
-                match e.e {
-                    sdl2::event::Event::KeyDown {
+                if let sdl2::event::Event::KeyDown {
                         keycode: Some(sdl2::keyboard::Keycode::Escape),
                         repeat,
                         ..
-                    } => {
-                        // if unprocessed escape key
-                        e.set_consumed(); // intentional redundant
-                        if repeat {
-                            continue;
-                        }
-                        break 'running;
+                    } = e.e {
+                    // if unprocessed escape key
+                    e.set_consumed(); // intentional redundant
+                    if repeat {
+                        continue;
                     }
-                    _ => {}
+                    break 'running;
                 }
             }
             events_accumulator.clear(); // clear after use
-            
+
             canvas.set_draw_color(Color::BLACK);
             canvas.clear();
-            match draw_gui(
-                &mut layout,
-                &mut canvas,
-                &mut events_accumulator,
-                Some(&mut focus_manager),
-            ) {
+            match layout.draw(&mut canvas, Some(&mut focus_manager)) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
@@ -331,7 +322,6 @@ fn main() -> std::process::ExitCode {
             }
             canvas.present();
         }
-
     }
     std::process::ExitCode::SUCCESS
 }

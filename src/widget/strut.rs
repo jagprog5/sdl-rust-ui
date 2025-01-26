@@ -1,6 +1,9 @@
-use crate::util::length::{MaxLen, MinLen, PreferredPortion};
+use crate::util::{
+    focus::FocusManager,
+    length::{MaxLen, MinLen, PreferredPortion},
+};
 
-use super::widget::{Widget, WidgetEvent};
+use super::Widget;
 
 pub struct Strut {
     pub min_w: MinLen,
@@ -37,12 +40,18 @@ impl Strut {
 }
 
 impl Widget for Strut {
-    fn draw(&mut self, _event: WidgetEvent) -> Result<(), String> { Ok(()) }
+    fn draw(
+        &mut self,
+        _canvas: &mut sdl2::render::WindowCanvas,
+        _focus_manager: Option<&FocusManager>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
 
     fn max(&mut self) -> Result<(MaxLen, MaxLen), String> {
         Ok((self.max_w, self.max_h))
     }
-    
+
     fn min(&mut self) -> Result<(MinLen, MinLen), String> {
         Ok((self.min_w, self.min_h))
     }

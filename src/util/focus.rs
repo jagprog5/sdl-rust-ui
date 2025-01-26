@@ -1,11 +1,15 @@
-use sdl2::{keyboard::{Keycode, Mod}, render::ClippingRect};
-
-use crate::widget::widget::SDLEvent;
-
-use std::{
-    cell::Cell, sync::atomic::{AtomicU64, Ordering}, time::Instant
+use sdl2::{
+    keyboard::{Keycode, Mod},
+    render::ClippingRect,
 };
 
+use crate::widget::SDLEvent;
+
+use std::{
+    cell::Cell,
+    sync::atomic::{AtomicU64, Ordering},
+    time::Instant,
+};
 
 /// 8 pseudo-random bytes. provide a source of randomness
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -102,7 +106,7 @@ impl<'a> RefCircularUIDCell<'a> {
     pub fn uid(&self) -> UID {
         self.0.get().uid()
     }
-    
+
     pub fn next(&self) -> Option<UID> {
         self.0.get().next()
     }
@@ -139,15 +143,16 @@ impl<'a> RefCircularUIDCell<'a> {
 
 /// a widget can be the current focus. how a widget handles what that means is
 /// up to it. only zero or one widgets should be focused at a time.
+#[derive(Default)]
 pub struct FocusManager(pub Option<UID>);
 
-impl Default for FocusManager {
-    fn default() -> Self {
-        Self(Default::default())
-    }
-}
 
-pub(crate) fn point_in_position_and_clipping_rect(x: i32, y: i32, position: sdl2::rect::Rect, clipping_rect: ClippingRect) -> bool {
+pub(crate) fn point_in_position_and_clipping_rect(
+    x: i32,
+    y: i32,
+    position: sdl2::rect::Rect,
+    clipping_rect: ClippingRect,
+) -> bool {
     if position.contains_point((x, y)) {
         // ignore mouse events out of scroll area and position
         let point_contained_in_clipping_rect = match clipping_rect {
@@ -163,15 +168,16 @@ pub(crate) fn point_in_position_and_clipping_rect(x: i32, y: i32, position: sdl2
     false
 }
 
+/// subset of WidgetUpdateEvent, where there is Some(focus_manager)
 pub struct WidgetEventFocusSubset<'sdl> {
-    /// subset of WidgetEvent that has Some focus_manager
     pub focus_manager: &'sdl mut FocusManager,
     pub position: super::rect::FRect,
+    pub clipping_rect: ClippingRect,
+    pub window_id: u32,
     /// a single event. the intent is that this would be inline with the
     /// existing processing loop - for consistent order of operations each
     /// element should be fully processed before moving to the next element
     pub event: &'sdl mut SDLEvent,
-    pub canvas: &'sdl mut sdl2::render::WindowCanvas,
 }
 
 impl FocusManager {
@@ -224,13 +230,15 @@ impl FocusManager {
                 }
                 event.focus_manager.0 = None; // unfocus
             }
-            sdl2::event::Event::MouseMotion { x, y, window_id, .. } => {
-                if event.canvas.window().id() != window_id {
+            sdl2::event::Event::MouseMotion {
+                x, y, window_id, ..
+            } => {
+                if event.window_id != window_id {
                     return; // not for me!
                 }
                 let position: Option<sdl2::rect::Rect> = event.position.into();
                 if let Some(position) = position {
-                    if point_in_position_and_clipping_rect(x, y, position, event.canvas.clip_rect()) {
+                    if point_in_position_and_clipping_rect(x, y, position, event.clipping_rect) {
                         // even if not focused, if mouse is moved over
                         // widget then set focus to that widget
                         //
@@ -245,28 +253,30 @@ impl FocusManager {
 
     /// if tab or shift tab has not been consumed by any widget, then set the
     /// focus to the first or last widget, respectively
-    pub fn default_start_focus_behavior(&mut self, events: &mut [SDLEvent], start_widget_focus_id: UID, end_widget_focus_id: UID) {
+    pub fn default_start_focus_behavior(
+        &mut self,
+        events: &mut [SDLEvent],
+        start_widget_focus_id: UID,
+        end_widget_focus_id: UID,
+    ) {
         for sdl_input in events.iter_mut().filter(|e| e.available()) {
-            match sdl_input.e {
-                sdl2::event::Event::KeyDown {
+            if let sdl2::event::Event::KeyDown {
                     repeat,
                     keycode: Some(Keycode::Tab),
                     keymod,
                     ..
-                } => {
-                    sdl_input.set_consumed();
-                    if repeat {
-                        continue;
-                    }
-                    if keymod.contains(Mod::LSHIFTMOD) || keymod.contains(Mod::RSHIFTMOD) {
-                        // shift tab was pressed
-                        self.0 = Some(end_widget_focus_id);
-                    } else {
-                        // tab was pressed
-                        self.0 = Some(start_widget_focus_id);
-                    }
+                } = sdl_input.e {
+                sdl_input.set_consumed();
+                if repeat {
+                    continue;
                 }
-                _ => {}
+                if keymod.contains(Mod::LSHIFTMOD) || keymod.contains(Mod::RSHIFTMOD) {
+                    // shift tab was pressed
+                    self.0 = Some(end_widget_focus_id);
+                } else {
+                    // tab was pressed
+                    self.0 = Some(start_widget_focus_id);
+                }
             }
         }
     }

@@ -12,28 +12,43 @@ use sdl2::{
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
+#[derive(Default)]
 pub enum BackgroundSizingPolicy {
     /// inherit sizing from the contained widget
+    #[default]
     Children,
     /// states literally, ignoring the contained widget. the widget will then be
     /// placed within the background's bound appropriately
     Custom(CustomSizingControl),
 }
 
-impl Default for BackgroundSizingPolicy {
-    fn default() -> Self {
-        BackgroundSizingPolicy::Children
-    }
-}
 
 pub struct SolidColorBackground<'sdl> {
     pub color: Color,
     pub contained: &'sdl mut dyn Widget,
     pub sizing_policy: BackgroundSizingPolicy,
+    /// state stored from update for draw
+    background_draw_pos: FRect,
+}
+
+impl<'sdl> SolidColorBackground<'sdl> {
+    pub fn new(
+        color: Color,
+        contained: &'sdl mut dyn Widget,
+        sizing_policy: BackgroundSizingPolicy,
+    ) -> Self {
+        Self {
+            color,
+            contained,
+            sizing_policy,
+            background_draw_pos: Default::default(),
+        }
+    }
 }
 
 impl<'sdl> Widget for SolidColorBackground<'sdl> {
-    fn update(&mut self, mut event: WidgetEvent) -> Result<(), String> {
+    fn update(&mut self, mut event: WidgetUpdateEvent) -> Result<(), String> {
+        self.background_draw_pos = event.position;
         match &self.sizing_policy {
             BackgroundSizingPolicy::Children => {
                 // exactly passes sizing information to parent in this
@@ -51,27 +66,23 @@ impl<'sdl> Widget for SolidColorBackground<'sdl> {
         }
     }
 
-    fn draw(&mut self, mut event: WidgetEvent) -> Result<(), String> {
-        event.canvas.set_draw_color(self.color);
-        let pos: Option<sdl2::rect::Rect> = event.position.into();
-        if let Some(pos) = pos {
-            event.canvas.fill_rect(pos)?;
-        }
+    fn update_adjust_position(&mut self, pos_delta: (i32, i32)) {
+        self.background_draw_pos.x += pos_delta.0 as f32;
+        self.background_draw_pos.y += pos_delta.1 as f32;
+        self.contained.update_adjust_position(pos_delta);
+    }
 
-        match &self.sizing_policy {
-            BackgroundSizingPolicy::Children => {
-                // exactly passes sizing information to parent in this case, no
-                // need to place again
-                self.contained.draw(event)
-            }
-            BackgroundSizingPolicy::Custom(_) => {
-                // whatever the sizing of the parent, properly place the
-                // contained within it
-                let position_for_contained =
-                    place(self.contained, event.position, event.aspect_ratio_priority)?;
-                self.contained.draw(event.sub_event(position_for_contained))
-            }
+    fn draw(
+        &mut self,
+        canvas: &mut sdl2::render::WindowCanvas,
+        focus_manager: Option<&FocusManager>,
+    ) -> Result<(), String> {
+        canvas.set_draw_color(self.color);
+        let pos: Option<sdl2::rect::Rect> = self.background_draw_pos.into();
+        if let Some(pos) = pos {
+            canvas.fill_rect(pos)?;
         }
+        self.contained.draw(canvas, focus_manager)
     }
 
     fn min(&mut self) -> Result<(MinLen, MinLen), String> {
@@ -165,15 +176,15 @@ impl<'sdl> Widget for SolidColorBackground<'sdl> {
     }
 }
 
+use crate::util::focus::FocusManager;
 use crate::util::length::{
     AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy,
     PreferredPortion,
 };
+use crate::util::rect::FRect;
 
-use super::{
-    debug::CustomSizingControl,
-    widget::{place, Widget, WidgetEvent},
-};
+use super::{place, Widget, WidgetUpdateEvent};
+use super::debug::CustomSizingControl;
 
 pub trait SoftwareRenderBackgroundStyle: Send + Sync {
     /// retrieve color at coordinate to draw a static texture
@@ -321,6 +332,9 @@ pub struct SoftwareRenderBackground<'sdl, Style: SoftwareRenderBackgroundStyle> 
 
     color_mod: (u8, u8, u8),
 
+    /// state stored for draw from update
+    background_draw_pos: crate::util::rect::FRect,
+
     creator: &'sdl TextureCreator<WindowContext>,
     cache: Option<SoftwareRenderBackgroundCache<'sdl>>,
 }
@@ -337,6 +351,7 @@ impl<'sdl, Style: SoftwareRenderBackgroundStyle> SoftwareRenderBackground<'sdl, 
             sizing_policy: Default::default(),
             creator,
             color_mod: (0xFF, 0xFF, 0xFF),
+            background_draw_pos: Default::default(),
             cache: Default::default(),
         }
     }
@@ -356,8 +371,12 @@ impl<'sdl, Style: SoftwareRenderBackgroundStyle> SoftwareRenderBackground<'sdl, 
 }
 
 impl<'sdl, Style: SoftwareRenderBackgroundStyle> Widget for SoftwareRenderBackground<'sdl, Style> {
-    fn draw(&mut self, mut event: WidgetEvent) -> Result<(), String> {
-        let pos: Option<sdl2::rect::Rect> = event.position.into();
+    fn draw(
+        &mut self,
+        canvas: &mut sdl2::render::WindowCanvas,
+        focus_manager: Option<&FocusManager>,
+    ) -> Result<(), String> {
+        let pos: Option<sdl2::rect::Rect> = self.background_draw_pos.into();
 
         if let Some(position) = pos {
             let scale_factor = self.style.scale_factor();
@@ -425,7 +444,7 @@ impl<'sdl, Style: SoftwareRenderBackgroundStyle> Widget for SoftwareRenderBackgr
 
                                     let pixel_iter = pixel_iter.skip(old_width as usize);
                                     pixel_iter.enumerate().for_each(|(pixel_index, pixel)| {
-                                        let x = (pixel_index + old_width as usize) as usize;
+                                        let x = pixel_index + old_width as usize;
                                         let y = row_index;
                                         let color = self.style.get(
                                             x * scale_factor as usize,
@@ -467,7 +486,7 @@ impl<'sdl, Style: SoftwareRenderBackgroundStyle> Widget for SoftwareRenderBackgr
 
                     surface.with_lock_mut(|buffer| {
                         let width = (position.width() / scale_factor) as usize;
-                        let row_stride = width as usize * 4;
+                        let row_stride = width * 4;
 
                         // let start = Instant::now();
 
@@ -512,7 +531,7 @@ impl<'sdl, Style: SoftwareRenderBackgroundStyle> Widget for SoftwareRenderBackgr
                 }
             };
 
-            event.canvas.copy(
+            canvas.copy(
                 &texture,
                 Rect::new(
                     0,
@@ -526,23 +545,11 @@ impl<'sdl, Style: SoftwareRenderBackgroundStyle> Widget for SoftwareRenderBackgr
             self.cache = Some(SoftwareRenderBackgroundCache { texture, surface });
         }
 
-        match &self.sizing_policy {
-            BackgroundSizingPolicy::Children => {
-                // scroller exactly passes sizing information to parent in this
-                // case, no need to place again
-                self.contained.draw(event)
-            }
-            BackgroundSizingPolicy::Custom(_) => {
-                // whatever the sizing of the parent, properly place the
-                // contained within it
-                let position_for_contained =
-                    place(self.contained, event.position, event.aspect_ratio_priority)?;
-                self.contained.draw(event.sub_event(position_for_contained))
-            }
-        }
+        self.contained.draw(canvas, focus_manager)
     }
 
-    fn update(&mut self, mut event: WidgetEvent) -> Result<(), String> {
+    fn update(&mut self, mut event: WidgetUpdateEvent) -> Result<(), String> {
+        self.background_draw_pos = event.position;
         match &self.sizing_policy {
             BackgroundSizingPolicy::Children => {
                 // scroller exactly passes sizing information to parent in this
@@ -558,6 +565,12 @@ impl<'sdl, Style: SoftwareRenderBackgroundStyle> Widget for SoftwareRenderBackgr
                     .update(event.sub_event(position_for_contained))
             }
         }
+    }
+
+    fn update_adjust_position(&mut self, pos_delta: (i32, i32)) {
+        self.background_draw_pos.x += pos_delta.0 as f32;
+        self.background_draw_pos.y += pos_delta.1 as f32;
+        self.contained.update_adjust_position(pos_delta);
     }
 
     fn min(&mut self) -> Result<(MinLen, MinLen), String> {

@@ -1,11 +1,11 @@
 use sdl2::render::TextureCreator;
 use sdl2::video::WindowContext;
 
-use crate::util::focus::RefCircularUIDCell;
+use crate::util::focus::{FocusManager, RefCircularUIDCell};
 use crate::util::length::{MaxLen, MinLen};
 
 use super::checkbox::{FocusPressWidgetSoundStyle, TextureVariantSizeCache, TextureVariantStyle};
-use super::widget::{Widget, WidgetEvent};
+use super::{Widget, WidgetUpdateEvent};
 
 #[cfg(feature = "sdl2-ttf")]
 use super::single_line_label::SingleLineLabel;
@@ -107,8 +107,7 @@ impl<'sdl, 'state> TextureVariantStyle<ButtonTextureVariant> for DefaultButtonSt
         }
 
         // draw foreground
-        let mut event = WidgetEvent {
-            focus_manager: None,
+        let mut event = WidgetUpdateEvent {
             position: crate::util::rect::FRect {
                 x: 0.,
                 y: 0.,
@@ -117,7 +116,11 @@ impl<'sdl, 'state> TextureVariantStyle<ButtonTextureVariant> for DefaultButtonSt
             },
             aspect_ratio_priority: Default::default(),
             events: Default::default(),
-            canvas,
+            focus_manager: None,
+            clipping_rect: sdl2::render::ClippingRect::None,
+            // does not matter, as the window_id is used to filter relevant
+            // events and no events are being passed in
+            window_id: u32::MAX,
         };
 
         match self.label.update(event.dup()) {
@@ -125,7 +128,7 @@ impl<'sdl, 'state> TextureVariantStyle<ButtonTextureVariant> for DefaultButtonSt
             Err(e) => return Err(e),
         };
 
-        match self.label.draw(event) {
+        match self.label.draw(canvas, None) {
             Ok(()) => (),
             Err(e) => return Err(e),
         };
@@ -146,8 +149,11 @@ pub struct Button<'sdl, 'state> {
 
     /// how does the button look
     style: Box<dyn ButtonStyle<ButtonTextureVariant> + 'sdl>,
-     /// what sounds should be played when the button is interacted with
+    /// what sounds should be played when the button is interacted with
     sounds: Box<dyn FocusPressWidgetSoundStyle + 'sdl>,
+
+    /// state stored for draw from update
+    draw_pos: crate::util::rect::FRect,
 
     creator: &'sdl TextureCreator<WindowContext>,
     idle: TextureVariantSizeCache<'sdl, ButtonTextureVariant>,
@@ -175,6 +181,7 @@ impl<'sdl, 'state> Button<'sdl, 'state> {
             idle: Default::default(),
             focused: Default::default(),
             focus_pressed: Default::default(),
+            draw_pos: Default::default(),
         }
     }
 }
@@ -232,7 +239,8 @@ impl<'sdl, 'state> Widget for Button<'sdl, 'state> {
             .preferred_link_allowed_exceed_portion()
     }
 
-    fn update(&mut self, event: WidgetEvent) -> Result<(), String> {
+    fn update(&mut self, event: WidgetUpdateEvent) -> Result<(), String> {
+        self.draw_pos = event.position;
         let fun: &mut dyn FnMut() -> Result<(), String> = &mut self.functionality;
         super::checkbox::focus_press_update_implementation(
             &mut self.hovered,
@@ -241,20 +249,28 @@ impl<'sdl, 'state> Widget for Button<'sdl, 'state> {
             self.focus_id.0.get(),
             event,
             fun,
-            self.sounds.as_mut()
+            self.sounds.as_mut(),
         )
     }
 
-    fn draw(&mut self, event: super::widget::WidgetEvent) -> Result<(), String> {
-        let position: sdl2::rect::Rect = match event.position.into() {
+    fn update_adjust_position(&mut self, pos_delta: (i32, i32)) {
+        self.draw_pos.x += pos_delta.0 as f32;
+        self.draw_pos.y += pos_delta.1 as f32;
+    }
+
+    fn draw(
+        &mut self,
+        canvas: &mut sdl2::render::WindowCanvas,
+        focus_manager: Option<&FocusManager>,
+    ) -> Result<(), String> {
+        let position: sdl2::rect::Rect = match self.draw_pos.into() {
             Some(v) => v,
             // the rest of this is just for drawing or being clicked, both
             // require non-zero area position
             None => return Ok(()),
         };
 
-        let focused = event
-            .focus_manager
+        let focused = focus_manager
             .map(|f| f.is_focused(self.focus_id.uid()))
             .unwrap_or(false);
         let pressed = self.pressed;
@@ -279,11 +295,11 @@ impl<'sdl, 'state> Widget for Button<'sdl, 'state> {
             self.style.as_mut_texture_variant_style(),
             variant,
             (position.width(), position.height()),
-            &self.creator,
-            event.canvas,
+            self.creator,
+            canvas,
         )?;
 
-        event.canvas.copy(txt, None, Some(position))?;
+        canvas.copy(txt, None, Some(position))?;
         Ok(())
     }
 }

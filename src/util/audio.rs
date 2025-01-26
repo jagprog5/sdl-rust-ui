@@ -1,4 +1,11 @@
-use std::{collections::HashMap, hash::Hasher, path::{Path, PathBuf}, ptr, rc::{Rc, Weak}, time::{Duration, Instant}};
+use std::{
+    collections::HashMap,
+    hash::Hasher,
+    path::{Path, PathBuf},
+    ptr,
+    rc::{Rc, Weak},
+    time::{Duration, Instant},
+};
 
 use sdl2::mixer::Chunk;
 use weak_table::WeakValueHashMap;
@@ -50,8 +57,10 @@ impl<T> RcDelayedDropper<T> {
     pub fn drop_later(&mut self, t: Rc<T>) {
         let now = Instant::now();
         self.vals.insert(RcKey(t), now);
-        self.vals.retain(|_, &mut instant| now.duration_since(instant) < self.duration);
-        if self.vals.len() > 64 { // ok hardcoding magic value for dev
+        self.vals
+            .retain(|_, &mut instant| now.duration_since(instant) < self.duration);
+        if self.vals.len() > 64 {
+            // ok hardcoding magic value for dev
             // warn during development. why are resources created so fast?
             debug_assert!(false);
         }
@@ -82,12 +91,9 @@ impl SoundManager {
 
     /// get a sound. to be immediately played
     pub fn get(&mut self, sound_path: &Path) -> Result<Rc<Chunk>, String> {
-        match self.sounds.get(sound_path) {
-            Some(v) => {
-                self.delay_dropper.drop_later(v.clone()); // refresh duration
-                return Ok(v)
-            },
-            None => {},
+        if let Some(v) = self.sounds.get(sound_path) {
+            self.delay_dropper.drop_later(v.clone()); // refresh duration
+            return Ok(v);
         }
 
         let chunk = Chunk::from_file(sound_path)?;

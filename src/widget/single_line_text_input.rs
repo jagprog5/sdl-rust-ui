@@ -15,7 +15,7 @@ use crate::util::{
     length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy, PreferredPortion},
 };
 
-use super::{single_line_label::SingleLineLabelCache, widget::Widget};
+use super::{single_line_label::SingleLineLabelCache, Widget, WidgetUpdateEvent};
 
 pub trait SingleLineTextEditState {
     /// produce a string from whatever data is being viewed
@@ -57,13 +57,9 @@ pub trait SingleLineTextEditStyle {
 }
 
 /// a default provided single line text edit style
+#[derive(Default)]
 pub struct DefaultSingleLineEditStyle {}
 
-impl Default for DefaultSingleLineEditStyle {
-    fn default() -> Self {
-        Self {}
-    }
-}
 
 impl SingleLineTextEditStyle for DefaultSingleLineEditStyle {
     fn draw(
@@ -133,19 +129,19 @@ impl SingleLineTextEditStyle for DefaultSingleLineEditStyle {
         {
             // big caret not at beginning or end
             canvas.draw_line(
-                Point::new(caret_position as i32, 0),
-                Point::new(caret_position as i32, size.1 as i32),
+                Point::new(caret_position, 0),
+                Point::new(caret_position, size.1 as i32),
             )?;
         } else {
             // small caret
             let caret_vertical_spacing = 5;
             canvas.draw_line(
                 Point::new(
-                    caret_position as i32,
+                    caret_position,
                     amount_inward + 2 + caret_vertical_spacing,
                 ),
                 Point::new(
-                    caret_position as i32,
+                    caret_position,
                     size.1 as i32 - (amount_inward + 3 + caret_vertical_spacing),
                 ),
             )?;
@@ -273,7 +269,7 @@ impl<'sdl> SingleLineTextInputSoundStyle for DefaultSingleLineTextInputSoundStyl
             // should never error, as it will always be returned to the cell
             None => return Err("couldn't reference sound manager".to_owned()),
         };
-        let maybe_r = manager.get(&sound_path);
+        let maybe_r = manager.get(sound_path);
         self.sound_manager.set(maybe_manager);
         let r = maybe_r?;
         // do not handle err here (e.g. not enough channels)
@@ -315,6 +311,8 @@ pub struct SingleLineTextInput<'sdl, 'state> {
 
     creator: &'sdl TextureCreator<WindowContext>,
     cache: Option<SingleLineLabelCache<'sdl>>,
+    /// state stored for draw from update
+    draw_pos: crate::util::rect::FRect,
 }
 
 impl<'sdl, 'state> SingleLineTextInput<'sdl, 'state> {
@@ -348,6 +346,7 @@ impl<'sdl, 'state> SingleLineTextInput<'sdl, 'state> {
             preferred_h: Default::default(),
             min_h_fail_policy: Default::default(),
             max_h_fail_policy: Default::default(),
+            draw_pos: Default::default(),
         }
     }
 }
@@ -382,10 +381,13 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
         (self.preferred_w, self.preferred_h)
     }
 
-    fn update(&mut self, mut event: super::widget::WidgetEvent) -> Result<(), String> {
+    fn update(&mut self, mut event: WidgetUpdateEvent) -> Result<(), String> {
+        self.draw_pos = event.position;
+
         // keys:
         // - only applicable if currently focused
         // - consume key event once used
+
         let focus_manager = match &mut event.focus_manager {
             Some(v) => v,
             None => {
@@ -397,6 +399,7 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                 return Ok(());
             }
         };
+
         // detect rising edge of focus, for sound playing
         let mut previously_focused = focus_manager.is_focused(self.focus_id.uid());
 
@@ -414,7 +417,8 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                     focus_manager,
                     position: event.position,
                     event: sdl_event,
-                    canvas: event.canvas,
+                    clipping_rect: event.clipping_rect,
+                    window_id: event.window_id,
                 },
             );
 
@@ -425,7 +429,7 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                 continue;
             }
 
-            if previously_focused == false {
+            if !previously_focused {
                 previously_focused = true;
                 self.sounds
                     .play_sound(SingleLineTextInputSoundVariant::Focus)?;
@@ -461,9 +465,9 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                         }
 
                         match (self.functionality)() {
-                            Ok(()) => return (true, None),
-                            Err(e) => return (true, Some(e)),
-                        };
+                            Ok(()) => (true, None),
+                            Err(e) => (true, Some(e)),
+                        }
                     }
                     // if backspace is pressed then pop the last character
                     sdl2::event::Event::KeyDown {
@@ -473,7 +477,7 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                         ..
                     } => {
                         let mut content = self.text.get();
-                        if content.len() != 0
+                        if !content.is_empty()
                             && timestamp
                                 .checked_sub(self.previous_text_input_timestamp)
                                 .unwrap_or(SOUND_LIMITER)
@@ -493,7 +497,7 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                             content.pop();
                         }
                         self.text.set(content);
-                        return (true, None);
+                        (true, None)
                     }
                     // if text is typed then append it to the text. a text input
                     // event is NOT a key down event. it handles utf8 typing
@@ -517,10 +521,10 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                         let mut content = self.text.get();
                         content += text;
                         self.text.set(content);
-                        return (true, None);
+                        (true, None)
                     }
                     _ => {
-                        return (false, None);
+                        (false, None)
                     }
                 }
             })();
@@ -541,13 +545,22 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
         Ok(())
     }
 
-    fn draw(&mut self, event: super::widget::WidgetEvent) -> Result<(), String> {
-        let position: sdl2::rect::Rect = match event.position.into() {
+    fn update_adjust_position(&mut self, pos_delta: (i32, i32)) {
+        self.draw_pos.x += pos_delta.0 as f32;
+        self.draw_pos.y += pos_delta.1 as f32;
+    }
+
+    fn draw(
+        &mut self,
+        canvas: &mut sdl2::render::WindowCanvas,
+        focus_manager: Option<&FocusManager>,
+    ) -> Result<(), String> {
+        let position: sdl2::rect::Rect = match self.draw_pos.into() {
             Some(v) => v,
             None => return Ok(()),
         };
 
-        let point_size: u16 = match (position.height() as u32).try_into() {
+        let point_size: u16 = match position.height().try_into() {
             Ok(v) => v,
             Err(_) => u16::MAX,
         };
@@ -560,8 +573,8 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
         if let SingleLineTextRenderType::Shaded(_fg, bg) = properties.render_type {
             // more consistent; regardless of what the aspect ratio fail policy
             // (padding bars), give a background over the entirety of the label
-            event.canvas.set_draw_color(bg);
-            event.canvas.fill_rect(position)?;
+            canvas.set_draw_color(bg);
+            canvas.fill_rect(position)?;
         }
 
         let cache = match self.cache.take().filter(|cache| {
@@ -575,7 +588,7 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                 let text = self.text.get();
                 let texture =
                     self.font_interface
-                        .render(text.as_str(), &properties, &self.creator)?;
+                        .render(text.as_str(), &properties, self.creator)?;
                 SingleLineLabelCache {
                     text_rendered: text,
                     texture,
@@ -600,19 +613,21 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
 
         // the implementation of SingleLineFontStyle typically gives a 1x1
         // replacement texture for rendering text of zero length
-        let caret_position = if cache.text_rendered.len() != 0 && query.height != 0 {
+        let caret_position = if !cache.text_rendered.is_empty() && query.height != 0 {
             let new_height = position.height() as f32;
 
             let scaler = new_height / query.height as f32; // div is guarded
             let new_width = query.width as f32 * scaler;
 
-            let ret = if new_width < position.width() as f32 {
+            
+
+            if new_width < position.width() as f32 {
                 // the text input's width is smaller than where it wants to be drawn
                 // left align the content
 
                 // requires copy_f to preserve exact ratio, or else position
                 // will flicker a bit while typing
-                event.canvas.copy_f(
+                canvas.copy_f(
                     txt,
                     None,
                     sdl2::rect::FRect::new(
@@ -628,13 +643,13 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                     debug_assert!(false); // can't occur but just in case
                     0.
                 } else {
-                    position.width() as f32 / new_width as f32
+                    position.width() as f32 / new_width
                 };
                 let width_amount = (query.width as f32 * width_portion) as u32;
 
                 // the text input's width is greater than where it wants to be drawn
                 // cut off and only show the rightmost part of it
-                event.canvas.copy(
+                canvas.copy(
                     txt,
                     sdl2::rect::Rect::new(
                         (query.width - width_amount) as i32,
@@ -645,9 +660,7 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                     position,
                 )?;
                 CaretPosition::Right
-            };
-
-            ret
+            }
         } else {
             CaretPosition::Left
         };
@@ -655,8 +668,7 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
         self.cache = Some(cache);
 
         // apply the style
-        let focused = event
-            .focus_manager
+        let focused = focus_manager
             .map(|f| f.is_focused(self.focus_id.uid()))
             .unwrap_or(false);
 
@@ -671,16 +683,16 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
             focused,
             (position.width(), position.height()),
             self.text.get(),
-            &self.creator,
-            event.canvas,
+            self.creator,
+            canvas,
             match caret_position {
                 CaretPosition::Left => 0.,
-                CaretPosition::Right => position.width().checked_sub(1).unwrap_or(0) as f32,
+                CaretPosition::Right => position.width().saturating_sub(1) as f32,
                 CaretPosition::Other(v) => v,
             },
         )?;
 
-        event.canvas.copy(txt, None, Some(position))?;
+        canvas.copy(txt, None, Some(position))?;
 
         Ok(())
     }

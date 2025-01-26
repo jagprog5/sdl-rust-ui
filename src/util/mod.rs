@@ -1,7 +1,7 @@
 pub mod focus;
-pub mod render;
 pub mod length;
 pub mod rect;
+pub mod render;
 pub(crate) mod rust;
 
 // this module is not disabled when sdl-ttf is disabled - the traits are still

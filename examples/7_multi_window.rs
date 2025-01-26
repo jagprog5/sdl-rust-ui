@@ -3,17 +3,26 @@ use std::{cell::Cell, fs::File, io::Read, path::Path};
 use rand::Rng;
 use sdl2::pixels::Color;
 use tiny_sdl2_gui::{
-    layout::scroller::{Scroller, ScrollerSizingPolicy}, util::{
-        focus::{CircularUID, FocusManager, PRNGBytes, RefCircularUIDCell, UID}, font::{FontManager, SingleLineTextRenderType, TextRenderer}, length::PreferredPortion}, widget::{
-        border::{Border, Empty, Gradient, Line}, button::{Button, DefaultButtonStyle}, checkbox::{CheckBox, DefaultCheckBoxStyle, EmptyFocusPressWidgetSoundStyle}, debug::CustomSizingControl, single_line_label::{DefaultSingleLineLabelState, SingleLineLabel}, widget::{draw_gui, update_gui, SDLEvent}
-    }
+    layout::scroller::{Scroller, ScrollerSizingPolicy},
+    util::{
+        focus::{CircularUID, FocusManager, PRNGBytes, RefCircularUIDCell, UID},
+        font::{FontManager, SingleLineTextRenderType, TextRenderer},
+        length::PreferredPortion,
+    },
+    widget::{
+        border::{Border, Empty, Gradient, Line},
+        button::{Button, DefaultButtonStyle},
+        checkbox::{CheckBox, DefaultCheckBoxStyle, EmptyFocusPressWidgetSoundStyle},
+        debug::CustomSizingControl,
+        single_line_label::{DefaultSingleLineLabelState, SingleLineLabel},
+        update_gui, SDLEvent, Widget,
+    },
 };
 
 #[path = "example_common/mod.rs"]
 mod example_common;
 
 fn main() -> std::process::ExitCode {
-
     let mut focus_manager = FocusManager::default();
 
     let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string()).unwrap();
@@ -111,7 +120,11 @@ fn main() -> std::process::ExitCode {
         &texture_creator1,
     );
 
-    let mut button1_border = Border::new(&mut button1, &texture_creator1, Box::new(Empty { width: 10 }));
+    let mut button1_border = Border::new(
+        &mut button1,
+        &texture_creator1,
+        Box::new(Empty { width: 10 }),
+    );
 
     // =========================
 
@@ -170,61 +183,59 @@ fn main() -> std::process::ExitCode {
     'running: loop {
         for event in event_pump.poll_iter() {
             match event {
-                sdl2::event::Event::Window { win_event, .. } => {
-                    match win_event {
-                        sdl2::event::WindowEvent::Close => break 'running,
-                        _ => {
-                            events_accumulator.push(SDLEvent::new(event));
-                        }
+                sdl2::event::Event::Window { win_event, .. } => match win_event {
+                    sdl2::event::WindowEvent::Close => break 'running,
+                    _ => {
+                        events_accumulator.push(SDLEvent::new(event));
                     }
-                }
+                },
                 sdl2::event::Event::Quit { .. } => {
                     break 'running;
                 }
                 _ => {
                     events_accumulator.push(SDLEvent::new(event));
-                },
+                }
             }
         }
 
         // lower cpu usage when idle (could be more fine grained, only updating
         // the relevant window instead)
-        let empty = events_accumulator.len() == 0;
+        let empty = events_accumulator.is_empty();
 
         if !empty {
             match update_gui(
                 &mut checkbox0,
-                &mut canvas0,
                 &mut events_accumulator,
                 Some(&mut focus_manager),
+                &canvas0,
             ) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
-            }
+            };
             match update_gui(
                 &mut button1_border,
-                &mut canvas1,
                 &mut events_accumulator,
                 Some(&mut focus_manager),
+                &canvas1,
             ) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
-            }
+            };
             match update_gui(
                 &mut widget_complete_2,
-                &mut canvas2,
                 &mut events_accumulator,
                 Some(&mut focus_manager),
+                &canvas2,
             ) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
-            }
+            };
             FocusManager::default_start_focus_behavior(
                 &mut focus_manager,
                 &mut events_accumulator,
@@ -233,20 +244,17 @@ fn main() -> std::process::ExitCode {
             );
 
             for e in events_accumulator.iter_mut().filter(|e| e.available()) {
-                match e.e {
-                    sdl2::event::Event::KeyDown {
+                if let sdl2::event::Event::KeyDown {
                         keycode: Some(sdl2::keyboard::Keycode::Escape),
                         repeat,
                         ..
-                    } => {
-                        // if unprocessed escape key
-                        e.set_consumed(); // intentional redundant
-                        if repeat {
-                            continue;
-                        }
-                        break 'running;
+                    } = e.e {
+                    // if unprocessed escape key
+                    e.set_consumed(); // intentional redundant
+                    if repeat {
+                        continue;
                     }
-                    _ => {}
+                    break 'running;
                 }
             }
             events_accumulator.clear(); // clear after use
@@ -260,35 +268,19 @@ fn main() -> std::process::ExitCode {
             canvas2.clear();
 
             // DRAW
-            match draw_gui(
-                &mut checkbox0,
-                &mut canvas0,
-                &mut events_accumulator,
-                Some(&mut focus_manager),
-            ) {
+            match checkbox0.draw(&mut canvas0, Some(&mut focus_manager)) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
             }
-
-            match draw_gui(
-                &mut button1_border,
-                &mut canvas1,
-                &mut events_accumulator,
-                Some(&mut focus_manager),
-            ) {
+            match button1_border.draw(&mut canvas1, Some(&mut focus_manager)) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
             }
-            match draw_gui(
-                &mut widget_complete_2,
-                &mut canvas2,
-                &mut events_accumulator,
-                Some(&mut focus_manager),
-            ) {
+            match widget_complete_2.draw(&mut canvas2, Some(&mut focus_manager)) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod

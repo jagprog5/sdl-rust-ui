@@ -8,7 +8,7 @@ use tiny_sdl2_gui::{
     widget::{
         debug::Debug,
         strut::Strut,
-        widget::{draw_gui, update_gui, SDLEvent, Widget},
+        update_gui, SDLEvent, Widget,
     },
 };
 
@@ -30,7 +30,7 @@ fn main() -> std::process::ExitCode {
     binding.min_w = 100f32.into();
     binding.max_h = (HEIGHT - 20.).into();
     binding.max_w = (WIDTH / 5.).into();
-    
+
     horizontal_layout.elems.push(&mut binding);
 
     let mut binding = Debug::default();
@@ -99,15 +99,16 @@ fn main() -> std::process::ExitCode {
     let sdl_context = sdl2::init().unwrap();
     let sdl_video_subsystem = sdl_context.video().unwrap();
     let window = sdl_video_subsystem
-        .window("debug widget + size constraint + layout", WIDTH as u32, HEIGHT as u32)
+        .window(
+            "debug widget + size constraint + layout",
+            WIDTH as u32,
+            HEIGHT as u32,
+        )
         .resizable()
         .position_centered()
         .build()
         .unwrap();
-    let mut canvas = window
-        .into_canvas()
-        .present_vsync()
-        .build().unwrap();
+    let mut canvas = window.into_canvas().present_vsync().build().unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
     // make window respect minimum size of entire GUI
@@ -132,21 +133,21 @@ fn main() -> std::process::ExitCode {
             }
         }
 
-        let empty = events_accumulator.len() == 0; // lower cpu usage when idle
+        let empty = events_accumulator.is_empty(); // lower cpu usage when idle
 
         if !empty {
             // UPDATE
             match update_gui(
                 &mut horizontal_layout,
-                &mut canvas,
                 &mut events_accumulator,
                 None,
+                &canvas,
             ) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
-            }
+            };
 
             // after gui update, use whatever is left
             for e in events_accumulator.iter_mut().filter(|e| e.available()) {
@@ -182,12 +183,7 @@ fn main() -> std::process::ExitCode {
             canvas.clear();
 
             // DRAW
-            match draw_gui(
-                &mut horizontal_layout,
-                &mut canvas,
-                &mut events_accumulator,
-                None,
-            ) {
+            match horizontal_layout.draw(&mut canvas, None) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod

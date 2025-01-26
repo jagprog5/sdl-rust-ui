@@ -4,16 +4,21 @@ use sdl2::{
     rect::{Point, Rect},
 };
 
-use crate::util::length::{
-    AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy,
-    PreferredPortion,
+use crate::util::{
+    focus::FocusManager,
+    length::{
+        AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy,
+        PreferredPortion,
+    },
+    rect::FRect,
 };
 
-use super::widget::{Widget, WidgetEvent};
+use super::{Widget, WidgetUpdateEvent};
 
 /// super simple debug widget. draws a outline at its position. use for testing
 /// purposes. brief flash when clicked
 #[derive(Debug, Clone, Copy)]
+#[derive(Default)]
 pub struct Debug {
     pub min_w: MinLen,
     pub min_h: MinLen,
@@ -30,31 +35,14 @@ pub struct Debug {
 
     /// internal state. set during update. used during draw
     clicked_this_frame: bool,
+    /// state stored for draw from update
+    draw_pos: FRect,
 }
 
 /// better name for where it isn't being used as a widget, just as a member for
 /// sizing info
 pub type CustomSizingControl = Debug;
 
-impl Default for Debug {
-    fn default() -> Self {
-        Self {
-            min_w: Default::default(),
-            min_h: Default::default(),
-            max_w: Default::default(),
-            max_h: Default::default(),
-            preferred_w: Default::default(),
-            preferred_h: Default::default(),
-            aspect_ratio: Default::default(),
-            min_w_fail_policy: Default::default(),
-            max_w_fail_policy: Default::default(),
-            min_h_fail_policy: Default::default(),
-            max_h_fail_policy: Default::default(),
-            preferred_link_allowed_exceed_portion: Default::default(),
-            clicked_this_frame: false,
-        }
-    }
-}
 
 /// use as a placeholder if some texture is missing, etc.
 pub fn debug_rect_outline(
@@ -134,53 +122,60 @@ impl Widget for Debug {
         )))
     }
 
-    fn update(&mut self, event: WidgetEvent) -> Result<(), String> {
+    fn update(&mut self, event: WidgetUpdateEvent) -> Result<(), String> {
         self.clicked_this_frame = false; // reset each frame
+        self.draw_pos = event.position;
+
         let pos: Option<sdl2::rect::Rect> = event.position.into();
         let pos = match pos {
             Some(v) => v,
             None => return Ok(()), // only functionality is being clicked
         };
 
-
         for e in event.events.iter_mut().filter(|e| e.available()) {
-            match e.e {
-                sdl2::event::Event::MouseButtonUp {
+            if let sdl2::event::Event::MouseButtonUp {
                     x,
                     y,
                     mouse_btn: MouseButton::Left,
                     window_id,
                     ..
-                } => {
-                    if event.canvas.window().id() != window_id {
-                        continue; // not for me!
-                    }
-                    if pos.contains_point((x, y)) {
-                        // ignore mouse events out of scroll area
-                        let point_contained_in_clipping_rect = match event.canvas.clip_rect() {
-                            sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
-                            sdl2::render::ClippingRect::Zero => false,
-                            sdl2::render::ClippingRect::None => true,
-                        };
-                        if !point_contained_in_clipping_rect {
-                            continue;
-                        }
-
-                        e.set_consumed();
-                        self.clicked_this_frame = true;
-                    }
+                } = e.e {
+                if event.window_id != window_id {
+                    continue; // not for me!
                 }
-                _ => {}
+                if pos.contains_point((x, y)) {
+                    // ignore mouse events out of scroll area
+                    let point_contained_in_clipping_rect = match event.clipping_rect {
+                        sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
+                        sdl2::render::ClippingRect::Zero => false,
+                        sdl2::render::ClippingRect::None => true,
+                    };
+                    if !point_contained_in_clipping_rect {
+                        continue;
+                    }
+
+                    e.set_consumed();
+                    self.clicked_this_frame = true;
+                }
             }
         }
 
         Ok(())
     }
 
-    fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
+    fn update_adjust_position(&mut self, pos_delta: (i32, i32)) {
+        self.draw_pos.x += pos_delta.0 as f32;
+        self.draw_pos.y += pos_delta.1 as f32;
+    }
+
+    fn draw(
+        &mut self,
+        canvas: &mut sdl2::render::WindowCanvas,
+        _focus_manager: Option<&FocusManager>,
+    ) -> Result<(), String> {
         // as always, snap to integer grid before rendering / using,
         // plus checks that draw area is non-zero
-        let pos: Option<sdl2::rect::Rect> = event.position.into();
+        let pos: Option<sdl2::rect::Rect> = self.draw_pos.into();
         let pos = match pos {
             Some(v) => v,
             None => return Ok(()),
@@ -192,6 +187,6 @@ impl Widget for Debug {
             println!("debug rect at {:?} was clicked!", pos);
         }
 
-        debug_rect_outline(color_to_use, pos, event.canvas)
+        debug_rect_outline(color_to_use, pos, canvas)
     }
 }

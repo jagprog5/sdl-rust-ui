@@ -5,6 +5,7 @@ use sdl2::{
 };
 
 use crate::util::{
+    focus::FocusManager,
     length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy, PreferredPortion},
     render::{
         bottom_right_center_seeking_rect_points, center_seeking_rect_points, interpolate_color,
@@ -12,7 +13,7 @@ use crate::util::{
     },
 };
 
-use super::widget::{Widget, WidgetEvent};
+use super::{Widget, WidgetUpdateEvent};
 
 /// interface indicating what type of border the widget should use
 pub trait BorderStyle {
@@ -21,7 +22,7 @@ pub trait BorderStyle {
 
     /// draw the border on the provided texture canvas. the texture will be
     /// redrawn only if the target dimensions change.
-    /// 
+    ///
     /// the texture canvas can have a width or height of down to 1 (regardless
     /// of specified border width)
     fn draw(&self, canvas: &mut Canvas<Window>) -> Result<(), String>;
@@ -172,15 +173,15 @@ impl BorderStyle for Empty {
 // contains a widget within a border
 pub struct Border<'sdl> {
     pub contained: &'sdl mut dyn Widget,
+
+    /// store state for draw from update
+    border_draw_pos: crate::util::rect::FRect,
+
     style: Box<dyn BorderStyle>,
 
+    /// texture is re-rendered only when the width or height changes
     texture: Option<Texture<'sdl>>,
     creator: &'sdl TextureCreator<WindowContext>,
-
-    /// texture is re-rendered only when the width or height changes
-    // u32 not float, since although positioning and sizing happens with floats,
-    // rendering happens with ints
-    prior_render_w_h: (u32, u32),
 }
 
 impl<'sdl> Border<'sdl> {
@@ -191,9 +192,9 @@ impl<'sdl> Border<'sdl> {
     ) -> Self {
         Self {
             contained: contains,
+            border_draw_pos: Default::default(),
             creator,
             texture: Default::default(),
-            prior_render_w_h: Default::default(),
             style,
         }
     }
@@ -270,95 +271,77 @@ impl<'sdl> Widget for Border<'sdl> {
         Ok((m.0.combined(baseline), m.1.combined(baseline)))
     }
 
-    fn update(&mut self, mut event: WidgetEvent) -> Result<(), String> {
+    fn update(&mut self, mut event: WidgetUpdateEvent) -> Result<(), String> {
+        self.border_draw_pos = event.position;
         let style_width = self.style.width() as f32;
         let position_for_child = crate::util::rect::FRect {
             x: event.position.x + style_width,
             y: event.position.y + style_width,
             w: event.position.w - style_width * 2.,
-            h: event.position.h - style_width * 2.,
+            h: event.position.h - style_width * 2., // deliberately allow negative
         };
         self.contained.update(event.sub_event(position_for_child))
     }
 
-    fn draw(&mut self, mut event: WidgetEvent) -> Result<(), String> {
-        let pos: Option<sdl2::rect::Rect> = event.position.into();
+    fn update_adjust_position(&mut self, pos_delta: (i32, i32)) {
+        self.border_draw_pos.x += pos_delta.0 as f32;
+        self.border_draw_pos.y += pos_delta.1 as f32;
+        self.contained.update_adjust_position(pos_delta);
+    }
 
-        match pos {
-            Some(pos) => {
-                // non zero position - draw the border and contained
-                let cache = self.texture.take().filter(|_texture| {
-                    self.prior_render_w_h.0 == pos.width() as u32
-                        && self.prior_render_w_h.1 == pos.height() as u32
-                });
-    
-                let texture = match cache {
-                    Some(v) => {
-                        v // texture can be reused
+    fn draw(
+        &mut self,
+        canvas: &mut sdl2::render::WindowCanvas,
+        focus_manager: Option<&FocusManager>,
+    ) -> Result<(), String> {
+        self.contained.draw(canvas, focus_manager)?;
+
+        let maybe_pos: Option<sdl2::rect::Rect> = self.border_draw_pos.into();
+
+        if let Some(pos) = maybe_pos {
+            // draw border if non empty position
+
+            let cache = self.texture.take().filter(|texture| {
+                let q = texture.query();
+                q.width == pos.width() && q.height == pos.height()
+            });
+
+            let texture = match cache {
+                Some(v) => {
+                    v // texture can be reused
+                }
+                None => {
+                    let mut texture = self
+                        .creator
+                        .create_texture_target(PixelFormatEnum::ARGB8888, pos.width(), pos.height())
+                        .map_err(|e| e.to_string())?;
+                    // the border is drawn over top of the contained texture. but the
+                    // transparent part in the middle should still show through
+                    texture.set_blend_mode(sdl2::render::BlendMode::Blend);
+
+                    let mut e_out: Option<String> = None;
+
+                    canvas
+                        .with_texture_canvas(&mut texture, |canvas| {
+                            canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
+                            canvas.clear(); // required to prevent flickering
+
+                            if let Err(e) = self.style.draw(canvas) {
+                                e_out = Some(e);
+                            }
+                        })
+                        .map_err(|e| e.to_string())?;
+
+                    if let Some(e) = e_out {
+                        return Err(e);
                     }
-                    None => {
-                        // must re-render the texture before use.
-                        self.prior_render_w_h = (pos.width() as u32, pos.height() as u32); // set here and not at end. don't retry on fail
-    
-                        // maybe? slightly easier on memory to free old texture before creating new one
-                        // self.texture = None;
-                        let mut texture = self
-                            .creator
-                            .create_texture_target(
-                                PixelFormatEnum::ARGB8888,
-                                pos.width() as u32,
-                                pos.height() as u32,
-                            )
-                            .map_err(|e| e.to_string())?;
-                        // the border is drawn over top of the contained texture. but the
-                        // transparent part in the middle should still show through
-                        texture.set_blend_mode(sdl2::render::BlendMode::Blend);
-    
-                        let mut e_out: Option<String> = None;
-    
-                        event
-                            .canvas
-                            .with_texture_canvas(&mut texture, |canvas| {
-                                canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
-                                canvas.clear(); // required to prevent flickering
-    
-                                if let Err(e) = self.style.draw(canvas) {
-                                    e_out = Some(e);
-                                }
-                            })
-                            .map_err(|e| e.to_string())?;
-    
-                        if let Some(e) = e_out {
-                            return Err(e);
-                        }
-    
-                        texture
-                    }
-                };
 
-                let style_width = self.style.width() as f32;
-                let position_for_child = crate::util::rect::FRect {
-                    x: event.position.x + style_width,
-                    y: event.position.y + style_width,
-                    w: event.position.w - style_width * 2.,
-                    h: event.position.h - style_width * 2.,
-                };
-                self.contained.draw(event.sub_event(position_for_child))?;
+                    texture
+                }
+            };
 
-                event.canvas.copy(&texture, None, Some(pos))?;
-                self.texture = Some(texture);
-            },
-            None => {
-                // keep consist with update and still call draw no matter what
-                let style_width = self.style.width() as f32;
-                let position_for_child = crate::util::rect::FRect {
-                    x: event.position.x + style_width,
-                    y: event.position.y + style_width,
-                    w: event.position.w - style_width * 2.,
-                    h: event.position.h - style_width * 2.,
-                };
-                self.contained.draw(event.sub_event(position_for_child))?;
-            },
+            canvas.copy(&texture, None, Some(pos))?;
+            self.texture = Some(texture);
         }
         Ok(())
     }

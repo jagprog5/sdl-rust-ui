@@ -1,9 +1,12 @@
 use crate::{
-    util::length::{
-        clamp, place, MaxLen, MaxLenFailPolicy, MaxLenPolicy, MinLen, MinLenFailPolicy,
-        MinLenPolicy, PreferredPortion,
+    util::{
+        focus::FocusManager,
+        length::{
+            clamp, place, MaxLen, MaxLenFailPolicy, MaxLenPolicy, MinLen, MinLenFailPolicy,
+            MinLenPolicy, PreferredPortion,
+        },
     },
-    widget::widget::{Widget, WidgetEvent},
+    widget::{Widget, WidgetUpdateEvent},
 };
 
 use super::horizontal_layout::RUN_OFF_SIZING_AMOUNT;
@@ -19,7 +22,7 @@ pub enum MajorAxisMaxLenPolicy {
 }
 
 pub(crate) fn direction_conditional_iter_mut<'a, T>(
-    vec: &'a mut Vec<T>,
+    vec: &'a mut [T],
     reverse: bool,
 ) -> Box<dyn Iterator<Item = &'a mut T> + 'a> {
     if reverse {
@@ -63,199 +66,6 @@ impl<'sdl> Default for VerticalLayout<'sdl> {
             max_h_policy: MajorAxisMaxLenPolicy::Together(MaxLenPolicy::Children),
         }
     }
-}
-
-// macro to reuse code for update vs draw
-macro_rules! impl_widget_fn {
-    ($fn_name:ident) => {
-        fn $fn_name(&mut self, mut event: WidgetEvent) -> Result<(), String> {
-            if self.elems.len() == 0 {
-                return Ok(());
-            }
-
-            // collect various info from child components
-            let mut sum_preferred_vertical = PreferredPortion(0.);
-            let mut info: Vec<ChildInfo> = vec![ChildInfo::default(); self.elems.len()];
-            for (i, elem) in
-                direction_conditional_iter_mut(&mut self.elems, self.reverse).enumerate()
-            {
-                let (min_w, min_h) = elem.min()?;
-                let (max_w, max_h) = elem.max()?;
-                let (pref_w, pref_h) = elem.preferred_portion();
-
-                info[i].max_horizontal = max_w;
-                info[i].min_horizontal = min_w;
-                info[i].preferred_horizontal = pref_w;
-
-                info[i].max_vertical = max_h.0;
-                info[i].min_vertical = min_h.0;
-                info[i].preferred_vertical = pref_h;
-                sum_preferred_vertical.0 += pref_h.0;
-            }
-
-            let mut amount_taken = 0f32;
-            let mut amount_given = 0f32;
-            for info in info.iter_mut() {
-                info.height = info
-                    .preferred_vertical
-                    .weighted_portion(sum_preferred_vertical, event.position.h);
-
-                let next_info_height = clamp(
-                    info.height,
-                    MinLen(info.min_vertical),
-                    MaxLen(info.max_vertical),
-                );
-
-                if info.height < next_info_height {
-                    // when clamped, it became larger
-                    // it wants to be larger than it currently is
-                    // take some len from the other components
-                    amount_taken += next_info_height - info.height;
-                } else if info.height > next_info_height {
-                    // when clamped, it became smaller
-                    // it wants to be smaller than it currently is
-                    // give some len to the other components
-                    amount_given += info.height - next_info_height;
-                }
-                info.height = next_info_height;
-            }
-
-            if amount_given >= amount_taken {
-                let excess = amount_given - amount_taken;
-                distribute_excess(&mut info, excess);
-            } else {
-                let deficit = amount_taken - amount_given;
-                take_deficit(&mut info, deficit);
-            }
-
-            if self.elems.len() == 1 {
-                let position = crate::widget::widget::place(
-                    self.elems[0],
-                    event.position,
-                    crate::util::length::AspectRatioPreferredDirection::WidthFromHeight,
-                )?;
-                let mut sub_event = event.sub_event(position);
-                sub_event.aspect_ratio_priority =
-                    crate::util::length::AspectRatioPreferredDirection::WidthFromHeight;
-                self.elems[0].$fn_name(sub_event)?;
-                return Ok(());
-            }
-
-            let mut sum_display_height = 0f32;
-            for info in info.iter() {
-                sum_display_height += info.height;
-            }
-
-            let vertical_space = if sum_display_height < event.position.h {
-                let extra_space = event.position.h - sum_display_height;
-                debug_assert!(self.elems.len() > 0);
-                let num_spaces = self.elems.len() as u32 - 1;
-
-                // store as float -> extremely important. or else a divide could
-                // truncate spaces and lead to weird positions over several elements
-                debug_assert!(num_spaces != 0);
-                let extra_space_per_elem = extra_space / num_spaces as f32;
-                extra_space_per_elem
-            } else {
-                0.
-            };
-
-            let mut y_pos = if self.reverse {
-                event.position.y + event.position.h
-            } else {
-                event.position.y
-            };
-            
-            // the position given to each child is snapped to an integer grid.
-            // in doing this, it rounds down. this accumulates an error over
-            // many elements, which would cause the overall layout to not fill
-            // its entire parent. to fix this, it distributes the error and
-            // instead rounds up sometimes
-            //
-            // the elements to round up must be chosen in a good way:  
-            // - it's monotonic. a increase or decrease in the parent will give
-            // the same or no change in each of the children
-            // - children at the minimum are kept as is to prevent some jitter
-            //   (but will be rounded up as a last resort)
-            // - maximums are respected  
-            // - it distributes the round-ups in a semi even way
-            let mut e_err_accumulation = 0.;
-            let mut indices_not_at_min: Vec<usize> = Vec::new();
-            let mut indices_at_min: Vec<usize> = Vec::new();
-            for (i, info) in info.iter_mut().enumerate() {
-                e_err_accumulation += info.height - info.height.floor();
-                info.height = info.height.floor();
-                if info.height <= info.min_vertical {
-                    indices_at_min.push(i);
-                } else {
-                    indices_not_at_min.push(i);
-                }
-            }
-
-            e_err_accumulation = e_err_accumulation.round();
-            let mut e_err_accumulation = e_err_accumulation as usize;
-
-            crate::util::shuffle::shuffle(&mut indices_not_at_min, 1234);
-            crate::util::shuffle::shuffle(&mut indices_at_min, 5678);
-            indices_not_at_min.extend(indices_at_min);
-            let visit_indices = indices_not_at_min;
-
-            for visit_index in visit_indices.iter() {
-                let info = &mut info[*visit_index];
-                if e_err_accumulation < 1 {
-                    break;
-                }
-                if info.height + 1. < info.max_vertical {
-                    info.height += 1.;
-                    e_err_accumulation -= 1;
-                }
-            }
-
-            for (elem, info) in
-                direction_conditional_iter_mut(&mut self.elems, self.reverse).zip(info.iter_mut())
-            {
-                if self.reverse {
-                    y_pos -= info.height;
-                    y_pos -= vertical_space;
-                }
-
-                // calculate the width, and maybe the width from the height
-                let pre_clamp_width = info.preferred_horizontal.get(event.position.w);
-                let mut width = clamp(pre_clamp_width, info.min_horizontal, info.max_horizontal);
-                if let Some(new_w) = elem.preferred_width_from_height(info.height) {
-                    let new_w = new_w?;
-                    let new_w_max_clamp = if elem.preferred_link_allowed_exceed_portion() {
-                        info.max_horizontal
-                    } else {
-                        info.max_horizontal.strictest(MaxLen(pre_clamp_width))
-                    };
-                    width = clamp(new_w, info.min_horizontal, new_w_max_clamp);
-                }
-
-                let x = place(
-                    width,
-                    event.position.w,
-                    elem.min_w_fail_policy(),
-                    elem.max_w_fail_policy(),
-                ) + event.position.x;
-
-                let mut sub_event = event.sub_event(crate::util::rect::FRect {
-                    x,
-                    y: y_pos,
-                    w: width,
-                    h: info.height,
-                });
-                sub_event.aspect_ratio_priority =
-                    crate::util::length::AspectRatioPreferredDirection::WidthFromHeight;
-                elem.$fn_name(sub_event)?;
-                if !self.reverse {
-                    y_pos += info.height;
-                    y_pos += vertical_space;
-                }
-            }
-            Ok(())
-        }
-    };
 }
 
 impl<'sdl> Widget for VerticalLayout<'sdl> {
@@ -358,11 +168,212 @@ impl<'sdl> Widget for VerticalLayout<'sdl> {
         self.max_h_fail_policy
     }
 
-    impl_widget_fn!(update);
-    impl_widget_fn!(draw);
+    fn update(&mut self, mut event: WidgetUpdateEvent) -> Result<(), String> {
+        if self.elems.is_empty() {
+            return Ok(());
+        }
+
+        // collect various info from child components
+        let mut sum_preferred_vertical = PreferredPortion(0.);
+        let mut info: Vec<ChildInfo> = vec![ChildInfo::default(); self.elems.len()];
+        for (i, elem) in direction_conditional_iter_mut(&mut self.elems, self.reverse).enumerate() {
+            let (min_w, min_h) = elem.min()?;
+            let (max_w, max_h) = elem.max()?;
+            let (pref_w, pref_h) = elem.preferred_portion();
+
+            info[i].max_horizontal = max_w;
+            info[i].min_horizontal = min_w;
+            info[i].preferred_horizontal = pref_w;
+
+            info[i].max_vertical = max_h.0;
+            info[i].min_vertical = min_h.0;
+            info[i].preferred_vertical = pref_h;
+            sum_preferred_vertical.0 += pref_h.0;
+        }
+
+        let mut amount_taken = 0f32;
+        let mut amount_given = 0f32;
+        for info in info.iter_mut() {
+            info.height = info
+                .preferred_vertical
+                .weighted_portion(sum_preferred_vertical, event.position.h);
+
+            let next_info_height = clamp(
+                info.height,
+                MinLen(info.min_vertical),
+                MaxLen(info.max_vertical),
+            );
+
+            if info.height < next_info_height {
+                // when clamped, it became larger
+                // it wants to be larger than it currently is
+                // take some len from the other components
+                amount_taken += next_info_height - info.height;
+            } else if info.height > next_info_height {
+                // when clamped, it became smaller
+                // it wants to be smaller than it currently is
+                // give some len to the other components
+                amount_given += info.height - next_info_height;
+            }
+            info.height = next_info_height;
+        }
+
+        if amount_given >= amount_taken {
+            let excess = amount_given - amount_taken;
+            distribute_excess(&mut info, excess);
+        } else {
+            let deficit = amount_taken - amount_given;
+            take_deficit(&mut info, deficit);
+        }
+
+        if self.elems.len() == 1 {
+            let position = crate::widget::place(
+                self.elems[0],
+                event.position,
+                crate::util::length::AspectRatioPreferredDirection::WidthFromHeight,
+            )?;
+            let mut sub_event = event.sub_event(position);
+            sub_event.aspect_ratio_priority =
+                crate::util::length::AspectRatioPreferredDirection::WidthFromHeight;
+            self.elems[0].update(sub_event)?;
+            return Ok(());
+        }
+
+        let mut sum_display_height = 0f32;
+        for info in info.iter() {
+            sum_display_height += info.height;
+        }
+
+        let vertical_space = if sum_display_height < event.position.h {
+            let extra_space = event.position.h - sum_display_height;
+            debug_assert!(!self.elems.is_empty());
+            let num_spaces = self.elems.len() as u32 - 1;
+
+            // store as float -> extremely important. or else a divide could
+            // truncate spaces and lead to weird positions over several elements
+            debug_assert!(num_spaces != 0);
+            
+            extra_space / num_spaces as f32
+        } else {
+            0.
+        };
+
+        let mut y_pos = if self.reverse {
+            event.position.y + event.position.h
+        } else {
+            event.position.y
+        };
+
+        // the position given to each child is snapped to an integer grid.
+        // in doing this, it rounds down. this accumulates an error over
+        // many elements, which would cause the overall layout to not fill
+        // its entire parent. to fix this, it distributes the error and
+        // instead rounds up sometimes
+        //
+        // the elements to round up must be chosen in a good way:
+        // - it's monotonic. a increase or decrease in the parent will give
+        // the same or no change in each of the children
+        // - children at the minimum are kept as is to prevent some jitter
+        //   (but will be rounded up as a last resort)
+        // - maximums are respected
+        // - it distributes the round-ups in a semi even way
+        let mut e_err_accumulation = 0.;
+        let mut indices_not_at_min: Vec<usize> = Vec::new();
+        let mut indices_at_min: Vec<usize> = Vec::new();
+        for (i, info) in info.iter_mut().enumerate() {
+            e_err_accumulation += info.height - info.height.floor();
+            info.height = info.height.floor();
+            if info.height <= info.min_vertical {
+                indices_at_min.push(i);
+            } else {
+                indices_not_at_min.push(i);
+            }
+        }
+
+        e_err_accumulation = e_err_accumulation.round();
+        let mut e_err_accumulation = e_err_accumulation as usize;
+
+        crate::util::shuffle::shuffle(&mut indices_not_at_min, 1234);
+        crate::util::shuffle::shuffle(&mut indices_at_min, 5678);
+        indices_not_at_min.extend(indices_at_min);
+        let visit_indices = indices_not_at_min;
+
+        for visit_index in visit_indices.iter() {
+            let info = &mut info[*visit_index];
+            if e_err_accumulation < 1 {
+                break;
+            }
+            if info.height + 1. < info.max_vertical {
+                info.height += 1.;
+                e_err_accumulation -= 1;
+            }
+        }
+
+        for (elem, info) in
+            direction_conditional_iter_mut(&mut self.elems, self.reverse).zip(info.iter_mut())
+        {
+            if self.reverse {
+                y_pos -= info.height;
+                y_pos -= vertical_space;
+            }
+
+            // calculate the width, and maybe the width from the height
+            let pre_clamp_width = info.preferred_horizontal.get(event.position.w);
+            let mut width = clamp(pre_clamp_width, info.min_horizontal, info.max_horizontal);
+            if let Some(new_w) = elem.preferred_width_from_height(info.height) {
+                let new_w = new_w?;
+                let new_w_max_clamp = if elem.preferred_link_allowed_exceed_portion() {
+                    info.max_horizontal
+                } else {
+                    info.max_horizontal.strictest(MaxLen(pre_clamp_width))
+                };
+                width = clamp(new_w, info.min_horizontal, new_w_max_clamp);
+            }
+
+            let x = place(
+                width,
+                event.position.w,
+                elem.min_w_fail_policy(),
+                elem.max_w_fail_policy(),
+            ) + event.position.x;
+
+            let mut sub_event = event.sub_event(crate::util::rect::FRect {
+                x,
+                y: y_pos,
+                w: width,
+                h: info.height,
+            });
+            sub_event.aspect_ratio_priority =
+                crate::util::length::AspectRatioPreferredDirection::WidthFromHeight;
+            elem.update(sub_event)?;
+            if !self.reverse {
+                y_pos += info.height;
+                y_pos += vertical_space;
+            }
+        }
+        Ok(())
+    }
+
+    fn update_adjust_position(&mut self, pos_delta: (i32, i32)) {
+        self.elems
+            .iter_mut()
+            .for_each(|e| e.update_adjust_position(pos_delta));
+    }
+
+    fn draw(
+        &mut self,
+        canvas: &mut sdl2::render::WindowCanvas,
+        focus_manager: Option<&FocusManager>,
+    ) -> Result<(), String> {
+        for e in self.elems.iter_mut() {
+            e.draw(canvas, focus_manager)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy)]
+#[derive(Default)]
 struct ChildInfo {
     preferred_vertical: PreferredPortion,
     max_vertical: f32,
@@ -376,19 +387,6 @@ struct ChildInfo {
     min_horizontal: MinLen,
 }
 
-impl Default for ChildInfo {
-    fn default() -> Self {
-        Self {
-            preferred_vertical: Default::default(),
-            max_vertical: Default::default(),
-            min_vertical: Default::default(),
-            height: Default::default(),
-            preferred_horizontal: Default::default(),
-            max_horizontal: Default::default(),
-            min_horizontal: Default::default(),
-        }
-    }
-}
 
 /// given some amount of excess length, distributed to all components in a way
 /// that respects the minimum and distributes the length equally by component

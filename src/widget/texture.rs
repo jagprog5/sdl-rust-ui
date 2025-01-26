@@ -1,11 +1,14 @@
 use std::ops::Not;
 
-use crate::util::length::{
-    AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MaxLenPolicy, MinLen,
-    MinLenFailPolicy, MinLenPolicy, PreferredPortion,
+use crate::util::{
+    focus::FocusManager,
+    length::{
+        AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MaxLenPolicy, MinLen,
+        MinLenFailPolicy, MinLenPolicy, PreferredPortion,
+    },
 };
 
-use super::widget::{Widget, WidgetEvent};
+use super::{Widget, WidgetUpdateEvent};
 
 /// how should an image's aspect ratio be treated if the available space does
 /// not have the same ratio
@@ -62,12 +65,15 @@ pub struct Texture<'sdl> {
     pub pref_w: PreferredPortion,
     pub pref_h: PreferredPortion,
     pub preferred_link_allowed_exceed_portion: bool,
+
+    /// state stored for draw from update
+    draw_pos: crate::util::rect::FRect,
 }
 
 impl<'sdl> Texture<'sdl> {
     pub fn new(texture: &'sdl sdl2::render::Texture<'sdl>) -> Texture<'sdl> {
         Texture {
-            texture: texture,
+            texture,
             texture_src: Default::default(),
             aspect_ratio_fail_policy: Default::default(),
             request_aspect_ratio: true,
@@ -82,6 +88,7 @@ impl<'sdl> Texture<'sdl> {
             pref_w: Default::default(),
             pref_h: Default::default(),
             preferred_link_allowed_exceed_portion: Default::default(),
+            draw_pos: Default::default(),
         }
     }
 }
@@ -157,7 +164,7 @@ impl<'sdl> Widget for Texture<'sdl> {
         if self.request_aspect_ratio.not() {
             return None;
         }
-        
+
         let q = self.texture.query();
         let ratio = q.width as f32 / q.height as f32;
         Some(Ok(AspectRatioPreferredDirection::width_from_height(
@@ -178,13 +185,27 @@ impl<'sdl> Widget for Texture<'sdl> {
         )))
     }
 
-    fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
+    fn update(&mut self, event: WidgetUpdateEvent) -> Result<(), String> {
+        self.draw_pos = event.position;
+        Ok(())
+    }
+
+    fn update_adjust_position(&mut self, pos_delta: (i32, i32)) {
+        self.draw_pos.x += pos_delta.0 as f32;
+        self.draw_pos.y += pos_delta.1 as f32;
+    }
+
+    fn draw(
+        &mut self,
+        canvas: &mut sdl2::render::WindowCanvas,
+        _focus_manager: Option<&FocusManager>,
+    ) -> Result<(), String> {
         texture_draw(
             self.texture,
             &self.aspect_ratio_fail_policy,
-            event.canvas,
+            canvas,
             self.texture_src,
-            event.position,
+            self.draw_pos,
         )
     }
 }

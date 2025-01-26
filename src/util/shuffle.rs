@@ -6,21 +6,32 @@ mod tests {
     fn test_shuffle_empty_vector() {
         let mut v: Vec<usize> = vec![];
         shuffle(&mut v, 42);
-        assert!(v.is_empty(), "Empty vector should remain empty after shuffle");
+        assert!(
+            v.is_empty(),
+            "Empty vector should remain empty after shuffle"
+        );
     }
 
     #[test]
     fn test_shuffle_single_element_vector() {
         let mut v = vec![42];
         shuffle(&mut v, 42);
-        assert_eq!(v, vec![42], "Single element vector should remain unchanged after shuffle");
+        assert_eq!(
+            v,
+            vec![42],
+            "Single element vector should remain unchanged after shuffle"
+        );
     }
 
     #[test]
     fn test_shuffle_normal_case() {
         let mut v = vec![1, 2, 3, 4, 5];
         shuffle(&mut v, 42);
-        assert_eq!(v, vec![2, 5, 4, 1, 3], "Deterministic shuffle result did not match");
+        assert_eq!(
+            v,
+            vec![2, 5, 4, 1, 3],
+            "Deterministic shuffle result did not match"
+        );
     }
 }
 

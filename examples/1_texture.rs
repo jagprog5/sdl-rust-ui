@@ -5,7 +5,7 @@ use tiny_sdl2_gui::{
     util::length::{MaxLen, MaxLenPolicy, MinLen, MinLenPolicy},
     widget::{
         texture::{AspectRatioFailPolicy, Texture},
-        widget::{draw_gui, update_gui, SDLEvent},
+        update_gui, SDLEvent, Widget,
     },
 };
 
@@ -19,14 +19,16 @@ fn main() -> std::process::ExitCode {
     let sdl_context = sdl2::init().unwrap();
     let sdl_video_subsystem = sdl_context.video().unwrap();
     let window = sdl_video_subsystem
-        .window("left three are aspect ratio failures. last one requests aspect ratio", WIDTH, HEIGHT)
+        .window(
+            "left three are aspect ratio failures. last one requests aspect ratio",
+            WIDTH,
+            HEIGHT,
+        )
         .resizable()
         .position_centered()
-        .build().unwrap();
-    let mut canvas = window
-        .into_canvas()
-        .present_vsync()
-        .build().unwrap();
+        .build()
+        .unwrap();
+    let mut canvas = window.into_canvas().present_vsync().build().unwrap();
     let texture_creator = canvas.texture_creator();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
@@ -111,56 +113,47 @@ fn main() -> std::process::ExitCode {
             }
         }
 
-        let empty = events_accumulator.len() == 0; // lower cpu usage when idle
+        let empty = events_accumulator.is_empty(); // lower cpu usage when idle
 
         if !empty {
             match update_gui(
                 &mut horizontal_layout,
-                &mut canvas,
                 &mut events_accumulator,
                 None,
+                &canvas,
             ) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
-            }
+            };
             for e in events_accumulator.iter_mut().filter(|e| e.available()) {
-                match e.e {
-                    sdl2::event::Event::KeyDown {
+                if let sdl2::event::Event::KeyDown {
                         keycode: Some(sdl2::keyboard::Keycode::Escape),
                         repeat,
                         ..
-                    } => {
-                        // if unprocessed escape key
-                        e.set_consumed(); // intentional redundant
-                        if repeat {
-                            continue;
-                        }
-                        break 'running;
+                    } = e.e {
+                    // if unprocessed escape key
+                    e.set_consumed(); // intentional redundant
+                    if repeat {
+                        continue;
                     }
-                    _ => {}
+                    break 'running;
                 }
             }
             events_accumulator.clear(); // clear after use
-            
+
             // set background black
             canvas.set_draw_color(sdl2::pixels::Color::BLACK);
             canvas.clear();
-            match draw_gui(
-                &mut horizontal_layout,
-                &mut canvas,
-                &mut events_accumulator,
-                None,
-            ) {
+            match horizontal_layout.draw(&mut canvas, None) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
-            }
+            };
             canvas.present();
         }
-
     }
     std::process::ExitCode::SUCCESS
 }

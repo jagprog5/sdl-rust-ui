@@ -1,20 +1,19 @@
 use std::cell::Cell;
-use std::u16;
 
 use compact_str::CompactString;
 use sdl2::{render::TextureCreator, video::WindowContext};
 
-use crate::util::font::{SingleLineFontStyle, TextRenderProperties, SingleLineTextRenderType};
+use crate::util::focus::FocusManager;
+use crate::util::font::{SingleLineFontStyle, SingleLineTextRenderType, TextRenderProperties};
 use crate::util::length::{
-    AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MaxLenPolicy, MinLen, MinLenFailPolicy, MinLenPolicy, PreferredPortion
+    AspectRatioPreferredDirection, MaxLen, MaxLenFailPolicy, MaxLenPolicy, MinLen,
+    MinLenFailPolicy, MinLenPolicy, PreferredPortion,
 };
 
-use crate::widget::{
-    texture::AspectRatioFailPolicy,
-    widget::{Widget, WidgetEvent},
-};
+use crate::widget::texture::AspectRatioFailPolicy;
 
 use super::texture::texture_draw;
+use super::{Widget, WidgetUpdateEvent};
 
 /// caches the texture and what was used to create the texture
 pub(crate) struct SingleLineLabelCache<'sdl> {
@@ -34,7 +33,7 @@ pub(crate) struct SingleLineLabelSizeCacheData {
 }
 
 /// caches the text width instead of recalculating every frame.
-/// 
+///
 /// this cache is used for
 /// - min or max when LenPolicy::Children is used
 /// - preferred_length
@@ -65,7 +64,6 @@ impl<'sdl> SingleLineLabelSizeCache<'sdl> {
         Ok(self.cache.insert(cache).size)
     }
 }
-
 
 pub trait SingleLineLabelState {
     /// produce a string from whatever data is being viewed
@@ -119,6 +117,9 @@ pub struct SingleLineLabel<'sdl, 'state> {
     creator: &'sdl TextureCreator<WindowContext>,
     cache: Option<SingleLineLabelCache<'sdl>>,
     ratio_cache: SingleLineLabelSizeCache<'sdl>,
+
+    /// state stored for draw from update
+    draw_pos: crate::util::rect::FRect,
 }
 
 impl<'sdl, 'state> SingleLineLabel<'sdl, 'state> {
@@ -151,13 +152,16 @@ impl<'sdl, 'state> SingleLineLabel<'sdl, 'state> {
             max_h: Default::default(),
             preferred_w: Default::default(),
             preferred_h: Default::default(),
+            draw_pos: Default::default(),
         }
     }
 }
 
 impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
     fn min(&mut self) -> Result<(MinLen, MinLen), String> {
-        let size = self.ratio_cache.get_size(u16::MAX, self.text.get().as_str())?;
+        let size = self
+            .ratio_cache
+            .get_size(u16::MAX, self.text.get().as_str())?;
         let ratio = size.0 as f32 / size.1 as f32;
         let min_w = AspectRatioPreferredDirection::width_from_height(ratio, self.min_h.0);
         Ok((MinLen(min_w), self.min_h))
@@ -172,7 +176,9 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
     }
 
     fn max(&mut self) -> Result<(MaxLen, MaxLen), String> {
-        let size = self.ratio_cache.get_size(u16::MAX, self.text.get().as_str())?;
+        let size = self
+            .ratio_cache
+            .get_size(u16::MAX, self.text.get().as_str())?;
         let ratio = size.0 as f32 / size.1 as f32;
         let max_w = AspectRatioPreferredDirection::width_from_height(ratio, self.max_h.0);
         Ok((MaxLen(max_w), self.max_h))
@@ -190,45 +196,57 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
         (self.preferred_w, self.preferred_h)
     }
 
-    fn preferred_width_from_height(
-        &mut self,
-        pref_h: f32,
-    ) -> Option<Result<f32, String>> {
+    fn preferred_width_from_height(&mut self, pref_h: f32) -> Option<Result<f32, String>> {
         if !self.request_aspect_ratio {
             return None;
         }
-        let pref_size = match self.ratio_cache.get_size(u16::MAX, self.text.get().as_str()) {
+        let pref_size = match self
+            .ratio_cache
+            .get_size(u16::MAX, self.text.get().as_str())
+        {
             Ok(v) => v,
             Err(err) => return Some(Err(err)),
         };
         let ratio = pref_size.0 as f32 / pref_size.1 as f32;
         Some(Ok(AspectRatioPreferredDirection::width_from_height(
-            ratio,
-            pref_h,
+            ratio, pref_h,
         )))
     }
 
-    fn preferred_height_from_width(
-        &mut self,
-        pref_w: f32,
-    ) -> Option<Result<f32, String>> {
+    fn preferred_height_from_width(&mut self, pref_w: f32) -> Option<Result<f32, String>> {
         if !self.request_aspect_ratio {
             return None;
         }
-        let pref_size = match self.ratio_cache.get_size(u16::MAX, self.text.get().as_str()) {
+        let pref_size = match self
+            .ratio_cache
+            .get_size(u16::MAX, self.text.get().as_str())
+        {
             Ok(v) => v,
             Err(err) => return Some(Err(err)),
         };
 
         let ratio = pref_size.0 as f32 / pref_size.1 as f32;
         Some(Ok(AspectRatioPreferredDirection::height_from_width(
-            ratio,
-            pref_w,
+            ratio, pref_w,
         )))
     }
 
-    fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
-        let position: sdl2::rect::Rect = match event.position.into() {
+    fn update(&mut self, event: WidgetUpdateEvent) -> Result<(), String> {
+        self.draw_pos = event.position;
+        Ok(())
+    }
+
+    fn update_adjust_position(&mut self, pos_delta: (i32, i32)) {
+        self.draw_pos.x += pos_delta.0 as f32;
+        self.draw_pos.y += pos_delta.1 as f32;
+    }
+
+    fn draw(
+        &mut self,
+        canvas: &mut sdl2::render::WindowCanvas,
+        _focus_manager: Option<&FocusManager>,
+    ) -> Result<(), String> {
+        let position: sdl2::rect::Rect = match self.draw_pos.into() {
             Some(v) => v,
             None => return Ok(()), // no input handling
         };
@@ -238,15 +256,16 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
         let height_option_1 = position.height();
 
         let height_option_2 = {
-            let pref_size = match self.ratio_cache.get_size(u16::MAX, self.text.get().as_str()) {
+            let pref_size = match self
+                .ratio_cache
+                .get_size(u16::MAX, self.text.get().as_str())
+            {
                 Ok(v) => v,
                 Err(err) => return Err(err),
             };
             let ratio = pref_size.0 as f32 / pref_size.1 as f32;
-            let height_from_width = AspectRatioPreferredDirection::height_from_width(
-                ratio,
-                position.width() as f32,
-            );
+            let height_from_width =
+                AspectRatioPreferredDirection::height_from_width(ratio, position.width() as f32);
             height_from_width.ceil() as u32
         };
 
@@ -265,12 +284,13 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
         if let SingleLineTextRenderType::Shaded(_fg, bg) = properties.render_type {
             // more consistent; regardless of what the aspect ratio fail policy
             // (padding bars), give a background over the entirety of the label
-            event.canvas.set_draw_color(bg);
-            event.canvas.fill_rect(position)?;
+            canvas.set_draw_color(bg);
+            canvas.fill_rect(position)?;
         }
 
         let cache = match self.cache.take().filter(|cache| {
-            cache.text_rendered == self.text.get().as_str() && cache.properties_rendered == properties
+            cache.text_rendered == self.text.get().as_str()
+                && cache.properties_rendered == properties
         }) {
             Some(cache) => cache,
             None => {
@@ -279,7 +299,7 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
                 let text = self.text.get();
                 let texture =
                     self.font_interface
-                        .render(text.as_str(), &properties, &self.creator)?;
+                        .render(text.as_str(), &properties, self.creator)?;
                 SingleLineLabelCache {
                     text_rendered: text,
                     texture,
@@ -292,9 +312,9 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
         let r = texture_draw(
             txt,
             &self.aspect_ratio_fail_policy,
-            event.canvas,
+            canvas,
             None,
-            event.position,
+            self.draw_pos,
         );
 
         self.cache = Some(cache);

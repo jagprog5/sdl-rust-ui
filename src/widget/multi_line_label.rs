@@ -1,11 +1,13 @@
 use sdl2::{pixels::Color, rect::Rect, render::TextureCreator, video::WindowContext};
 
 use crate::util::{
+    focus::FocusManager,
     font::MultiLineFontStyle,
-    length::{MaxLenFailPolicy, MinLenFailPolicy, PreferredPortion}, rect::rect_len_round,
+    length::{MaxLenFailPolicy, MinLenFailPolicy, PreferredPortion},
+    rect::rect_len_round,
 };
 
-use super::widget::{Widget, WidgetEvent};
+use super::{Widget, WidgetUpdateEvent};
 
 pub trait MultiLineLabelState {
     /// produce a string from whatever data is being viewed
@@ -74,6 +76,9 @@ pub struct MultiLineLabel<'sdl, 'state> {
     pub preferred_w: PreferredPortion,
     pub preferred_h: PreferredPortion,
 
+    /// state stored for draw from update
+    draw_pos: crate::util::rect::FRect,
+
     creator: &'sdl TextureCreator<WindowContext>,
     cache: Option<MultiLineLabelCache<'sdl>>,
 }
@@ -97,6 +102,7 @@ impl<'sdl, 'state> MultiLineLabel<'sdl, 'state> {
             cache: Default::default(),
             min_h_policy: Default::default(),
             max_h_policy: Default::default(),
+            draw_pos: Default::default(),
         }
     }
 }
@@ -153,7 +159,7 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
                             self.color,
                             self.point_size,
                             pref_w,
-                            &self.creator,
+                            self.creator,
                         ) {
                             Ok(v) => v,
                             Err(e) => return Some(Err(e)),
@@ -167,20 +173,34 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
                         }
                     }
                 };
-        
+
                 let txt = &cache.texture;
-        
+
                 let query = txt.query();
 
                 self.cache = Some(cache);
                 Some(Ok(query.height as f32))
-            },
+            }
             _ => None,
         }
     }
 
-    fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
-        let position: sdl2::rect::Rect = match event.position.into() {
+    fn update(&mut self, event: WidgetUpdateEvent) -> Result<(), String> {
+        self.draw_pos = event.position;
+        Ok(())
+    }
+
+    fn update_adjust_position(&mut self, pos_delta: (i32, i32)) {
+        self.draw_pos.x += pos_delta.0 as f32;
+        self.draw_pos.y += pos_delta.1 as f32;
+    }
+
+    fn draw(
+        &mut self,
+        canvas: &mut sdl2::render::WindowCanvas,
+        _focus_manager: Option<&FocusManager>,
+    ) -> Result<(), String> {
+        let position: sdl2::rect::Rect = match self.draw_pos.into() {
             Some(v) => v,
             None => return Ok(()), // no input handling
         };
@@ -201,7 +221,7 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
                     self.color,
                     self.point_size,
                     position.width(),
-                    &self.creator,
+                    self.creator,
                 )?;
                 MultiLineLabelCache {
                     text_rendered: text,
@@ -222,7 +242,7 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
             let excess = excess as f32;
             let excess = excess * self.max_h_policy.0;
             let excess = excess.round() as i32;
-            event.canvas.copy(
+            canvas.copy(
                 txt,
                 None,
                 Some(Rect::new(
@@ -239,16 +259,21 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
                 MultiLineMinHeightFailPolicy::CutOff(v) => {
                     let excess = excess * (1. - v);
                     let excess = excess.round() as i32;
-                    event.canvas.copy(
+                    canvas.copy(
                         txt,
                         Some(Rect::new(0, excess, query.width, position.height())),
-                        Some(Rect::new(position.x, position.y, query.width, position.height())),
+                        Some(Rect::new(
+                            position.x,
+                            position.y,
+                            query.width,
+                            position.height(),
+                        )),
                     )?
                 }
                 MultiLineMinHeightFailPolicy::AllowRunOff(v) => {
                     let excess = excess * (v.0 - 1.);
                     let excess = excess.round() as i32;
-                    event.canvas.copy(
+                    canvas.copy(
                         txt,
                         None,
                         Some(Rect::new(
@@ -260,12 +285,8 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
                     )?;
                 }
                 MultiLineMinHeightFailPolicy::None(_, _) => {
-                    event.canvas.copy(
-                        txt,
-                        None,
-                        event.position,
-                    )?;
-                },
+                    canvas.copy(txt, None, self.draw_pos)?;
+                }
             }
         }
 

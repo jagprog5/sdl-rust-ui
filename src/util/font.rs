@@ -40,12 +40,9 @@ impl<'sdl> FontManager<'sdl> {
 #[cfg(feature = "sdl2-ttf")]
 impl<'sdl> FontManager<'sdl> {
     pub fn get(&mut self, point_size: u16) -> Result<Rc<Font<'sdl, 'sdl>>, String> {
-        match self.fonts.get(&point_size) {
-            Some(v) => return Ok(v),
-            None => {}
-        };
+        if let Some(v) = self.fonts.get(&point_size) { return Ok(v) };
 
-        let rwops = RWops::from_bytes(&self.font_data)?;
+        let rwops = RWops::from_bytes(self.font_data)?;
         let font = Rc::new(self.ttf_context.load_font_from_rwops(rwops, point_size)?);
         self.fonts.insert(point_size, font.clone());
         Ok(font)
@@ -56,7 +53,7 @@ impl<'sdl> FontManager<'sdl> {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum SingleLineTextRenderType {
-    #[deprecated(note="looks like sh**")]
+    #[deprecated(note = "looks like sh**")]
     Solid(Color),
     /// foreground, background, respectively
     Shaded(Color, Color),
@@ -153,7 +150,7 @@ impl<'sdl> SingleLineFontStyle<'sdl> for TextRenderer<'sdl> {
         properties: &TextRenderProperties,
         texture_creator: &'sdl TextureCreator<WindowContext>,
     ) -> Result<sdl2::render::Texture<'sdl>, String> {
-        let surface = if text.len() == 0 {
+        let surface = if text.is_empty() {
             // handle SdlError("Text has zero width")
             // create a 1x1 replacement
             let mut surface = Surface::new(1, 1, sdl2::pixels::PixelFormatEnum::ARGB8888)
@@ -201,7 +198,8 @@ impl<'sdl> SingleLineFontStyle<'sdl> for TextRenderer<'sdl> {
             };
 
             let partial_render = font.render(text);
-            let surface = match properties.render_type {
+            
+            match properties.render_type {
                 #[allow(deprecated)]
                 SingleLineTextRenderType::Solid(color) => partial_render.solid(color),
                 SingleLineTextRenderType::Shaded(color, background) => {
@@ -209,8 +207,7 @@ impl<'sdl> SingleLineFontStyle<'sdl> for TextRenderer<'sdl> {
                 }
                 SingleLineTextRenderType::Blended(color) => partial_render.blended(color),
             }
-            .map_err(|e| e.to_string())?;
-            surface
+            .map_err(|e| e.to_string())?
         };
 
         let mut texture = texture_creator
@@ -273,7 +270,7 @@ impl<'sdl> MultiLineFontStyle<'sdl> for TextRenderer<'sdl> {
         texture_creator: &'sdl TextureCreator<WindowContext>,
     ) -> Result<sdl2::render::Texture<'sdl>, String> {
         // closely follows SingleLineFontStyle::render implementation
-        let surface = if text.len() == 0 {
+        let surface = if text.is_empty() {
             // handle SdlError("Text has zero width")
             // create a 1x1 replacement
             let mut surface = Surface::new(1, 1, sdl2::pixels::PixelFormatEnum::ARGB8888)
@@ -313,10 +310,10 @@ impl<'sdl> MultiLineFontStyle<'sdl> for TextRenderer<'sdl> {
             };
 
             let partial_render = font.render(text);
-            let surface = partial_render
+            
+            partial_render
                 .blended_wrapped(color, wrap_width)
-                .map_err(|e| e.to_string())?;
-            surface
+                .map_err(|e| e.to_string())?
         };
         let mut texture = texture_creator
             .create_texture_from_surface(surface)

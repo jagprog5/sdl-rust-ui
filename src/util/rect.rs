@@ -1,5 +1,6 @@
-/// NOT an sdl2::rect::FRect. this one has no restriction on members
+/// NOT an sdl2::rect::FRect; this one has no restriction on members's values
 #[derive(Debug, Clone, Copy)]
+#[derive(Default)]
 pub struct FRect {
     /// can be any value
     pub x: f32,
@@ -10,6 +11,7 @@ pub struct FRect {
     /// can be any value
     pub h: f32,
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -48,7 +50,7 @@ mod tests {
 
         // rounding away from 0 on positive side unaffected
         assert_eq!(rect_position_round(0.5), 1);
-        assert_eq!(rect_position_round(1.5), 2); 
+        assert_eq!(rect_position_round(1.5), 2);
 
         // checks special functionality (rounding up and not away from zero)
         assert_eq!(rect_position_round(-0.5), 0);
@@ -59,7 +61,7 @@ mod tests {
 
 /// round, but if exactly between numbers, always round up.
 /// this is required or else a 1 pixel gap can appear
-/// 
+///
 /// this should be used in contexts where it should match the conversion to
 /// sdl2::rect::Rect from crate::util::rect::FRect
 pub fn rect_position_round(i: f32) -> i32 {
@@ -73,35 +75,31 @@ pub fn rect_position_round(i: f32) -> i32 {
 }
 
 /// round, only giving positive output
-/// 
+///
 /// this should be used in contexts where it should match the conversion to
 /// sdl2::rect::Rect from crate::util::rect::FRect
 pub fn rect_len_round(i: f32) -> Option<u32> {
     let i = i.round();
-    if i < 1. { // must be positive
+    if i < 1. {
+        // must be positive
         None
     } else {
         Some(i as u32)
     }
 }
 
-impl Into<Option<sdl2::rect::Rect>> for FRect {
-    fn into(self) -> Option<sdl2::rect::Rect> {
-        let w = match rect_len_round(self.w) {
+impl From<FRect> for Option<sdl2::rect::Rect> {
+    fn from(val: FRect) -> Self {
+        let w = match rect_len_round(val.w) {
             Some(v) => v,
             None => return None,
         };
-        let h = match rect_len_round(self.h) {
+        let h = match rect_len_round(val.h) {
             Some(v) => v,
             None => return None,
         };
-        let x = rect_position_round(self.x);
-        let y = rect_position_round(self.y);
-        Some(sdl2::rect::Rect::new(
-            x,
-            y,
-            w,
-            h,
-        ))
+        let x = rect_position_round(val.x);
+        let y = rect_position_round(val.y);
+        Some(sdl2::rect::Rect::new(x, y, w, h))
     }
 }

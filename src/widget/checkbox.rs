@@ -18,7 +18,7 @@ use crate::util::{
     rust::reborrow,
 };
 
-use super::widget::{Widget, WidgetEvent};
+use super::{Widget, WidgetUpdateEvent};
 
 /// a different texture is rendered for each of the displayed states that a
 /// checkbox can have
@@ -72,13 +72,9 @@ pub trait TextureVariantStyle<TVariant> {
 }
 
 /// a default provided check box style
+#[derive(Default)]
 pub struct DefaultCheckBoxStyle {}
 
-impl Default for DefaultCheckBoxStyle {
-    fn default() -> Self {
-        Self {}
-    }
-}
 
 impl TextureVariantStyle<CheckBoxTextureVariant> for DefaultCheckBoxStyle {
     fn draw(
@@ -159,12 +155,10 @@ impl TextureVariantStyle<CheckBoxTextureVariant> for DefaultCheckBoxStyle {
             } else {
                 Color::RGB(0, 160, 0)
             }
+        } else if pressed {
+            Color::RGB(100, 200, 100) // rising
         } else {
-            if pressed {
-                Color::RGB(100, 200, 100) // rising
-            } else {
-                Color::RGB(50, 50, 50)
-            }
+            Color::RGB(50, 50, 50)
         };
         canvas.set_draw_color(color);
 
@@ -314,7 +308,7 @@ impl<'sdl> FocusPressWidgetSoundStyle for DefaultFocusPressWidgetSoundStyle<'sdl
             // should never error, as it will always be returned to the cell
             None => return Err("couldn't reference sound manager".to_owned()),
         };
-        let maybe_r = manager.get(&sound_path);
+        let maybe_r = manager.get(sound_path);
         self.sound_manager.set(maybe_manager);
         let r = maybe_r?;
         // do not handle err here (e.g. not enough channels)
@@ -336,6 +330,9 @@ pub struct CheckBox<'sdl, 'state> {
 
     pub size: f32,
     creator: &'sdl TextureCreator<WindowContext>,
+
+    /// state stored for draw from update
+    draw_pos: crate::util::rect::FRect,
 
     /// how does the checkbox look
     style: Box<dyn TextureVariantStyle<CheckBoxTextureVariant> + 'sdl>,
@@ -369,6 +366,7 @@ impl<'sdl, 'state> CheckBox<'sdl, 'state> {
             sounds,
             size: 30.,
             creator,
+            draw_pos: Default::default(),
             idle: Default::default(),
             idle_checked: Default::default(),
             checked_pressed: Default::default(),
@@ -386,7 +384,7 @@ pub(crate) fn focus_press_update_implementation<T>(
     pressed: &mut bool,
     focused_previous_frame: &mut bool,
     focus_id: CircularUID,
-    mut event: WidgetEvent,
+    mut event: WidgetUpdateEvent,
     functionality: &mut T,
     sounds: &mut dyn FocusPressWidgetSoundStyle,
 ) -> Result<(), String>
@@ -427,7 +425,8 @@ where
                     focus_manager,
                     position: event.position,
                     event: sdl_event,
-                    canvas: event.canvas,
+                    clipping_rect: event.clipping_rect,
+                    window_id: event.window_id,
                 },
             );
         }
@@ -504,24 +503,27 @@ where
             //   haven't been consumed is good enough)
             // - sets focus to current widget when consumed
             sdl2::event::Event::MouseMotion {
-                mousestate, x, y, window_id, ..
+                mousestate,
+                x,
+                y,
+                window_id,
+                ..
             } => {
-                if window_id != event.canvas.window().id() {
+                if window_id != event.window_id {
                     continue; // not for me!
                 }
                 let position: Option<sdl2::rect::Rect> = event.position.into();
                 if let Some(position) = position {
-                    if point_in_position_and_clipping_rect(x, y, position, event.canvas.clip_rect())
-                    {
+                    if point_in_position_and_clipping_rect(x, y, position, event.clipping_rect) {
                         *hovered = true;
                         if !mousestate.left() {
-                            if focus_sound_state == false {
+                            if !focus_sound_state {
                                 focus_sound_state = true;
                                 sounds.play_sound(FocusPressWidgetSoundVariant::Focus)?;
                             }
                             continue;
                         }
-                        if focus_sound_state == false {
+                        if !focus_sound_state {
                             focus_sound_state = true;
                             sounds.play_sound(FocusPressWidgetSoundVariant::Press)?;
                         }
@@ -544,13 +546,12 @@ where
                 window_id,
                 ..
             } => {
-                if window_id != event.canvas.window().id() {
+                if window_id != event.window_id {
                     continue; // not for me!
                 }
                 let position: Option<sdl2::rect::Rect> = event.position.into();
                 if let Some(position) = position {
-                    if point_in_position_and_clipping_rect(x, y, position, event.canvas.clip_rect())
-                    {
+                    if point_in_position_and_clipping_rect(x, y, position, event.clipping_rect) {
                         sounds.play_sound(FocusPressWidgetSoundVariant::Press)?;
                         // the left mouse button was pressed on this widget
                         *pressed = true;
@@ -570,15 +571,14 @@ where
                 window_id,
                 ..
             } => {
-                if window_id != event.canvas.window().id() {
+                if window_id != event.window_id {
                     continue; // not for me!
                 }
                 // ok even if not focused (button click works even if no
                 // focus manager is used at all)
                 let position: Option<sdl2::rect::Rect> = event.position.into();
                 if let Some(position) = position {
-                    if point_in_position_and_clipping_rect(x, y, position, event.canvas.clip_rect())
-                    {
+                    if point_in_position_and_clipping_rect(x, y, position, event.clipping_rect) {
                         *pressed = false;
                         *hovered = true;
                         focus_sound_state = true;
@@ -616,7 +616,8 @@ impl<'sdl, 'state> Widget for CheckBox<'sdl, 'state> {
         Ok((MaxLen(self.size), MaxLen(self.size)))
     }
 
-    fn update(&mut self, event: WidgetEvent) -> Result<(), String> {
+    fn update(&mut self, event: WidgetUpdateEvent) -> Result<(), String> {
+        self.draw_pos = event.position;
         focus_press_update_implementation(
             &mut self.hovered,
             &mut self.pressed,
@@ -633,16 +634,24 @@ impl<'sdl, 'state> Widget for CheckBox<'sdl, 'state> {
         )
     }
 
-    fn draw(&mut self, event: WidgetEvent) -> Result<(), String> {
-        let position: sdl2::rect::Rect = match event.position.into() {
+    fn update_adjust_position(&mut self, pos_delta: (i32, i32)) {
+        self.draw_pos.x += pos_delta.0 as f32;
+        self.draw_pos.y += pos_delta.1 as f32;
+    }
+
+    fn draw(
+        &mut self,
+        canvas: &mut sdl2::render::WindowCanvas,
+        focus_manager: Option<&FocusManager>,
+    ) -> Result<(), String> {
+        let position: sdl2::rect::Rect = match self.draw_pos.into() {
             Some(v) => v,
             // the rest of this is just for drawing or being clicked, both
             // require non-zero area position
             None => return Ok(()),
         };
 
-        let focused = event
-            .focus_manager
+        let focused = focus_manager
             .map(|f| f.is_focused(self.focus_id.uid()))
             .unwrap_or(false);
         let checked = self.checked.get();
@@ -653,23 +662,19 @@ impl<'sdl, 'state> Widget for CheckBox<'sdl, 'state> {
                 } else {
                     CheckBoxTextureVariant::FocusedPressed
                 }
+            } else if checked {
+                CheckBoxTextureVariant::FocusChecked
             } else {
-                if checked {
-                    CheckBoxTextureVariant::FocusChecked
-                } else {
-                    CheckBoxTextureVariant::Focused
-                }
+                CheckBoxTextureVariant::Focused
+            }
+        } else if checked {
+            if self.pressed {
+                CheckBoxTextureVariant::CheckedPressed
+            } else {
+                CheckBoxTextureVariant::Checked
             }
         } else {
-            if checked {
-                if self.pressed {
-                    CheckBoxTextureVariant::CheckedPressed
-                } else {
-                    CheckBoxTextureVariant::Checked
-                }
-            } else {
-                CheckBoxTextureVariant::Idle
-            }
+            CheckBoxTextureVariant::Idle
         };
 
         let cache = match variant {
@@ -686,11 +691,11 @@ impl<'sdl, 'state> Widget for CheckBox<'sdl, 'state> {
             self.style.as_mut(),
             variant,
             (position.width(), position.height()),
-            &self.creator,
-            event.canvas,
+            self.creator,
+            canvas,
         )?;
 
-        event.canvas.copy(txt, None, Some(position))?;
+        canvas.copy(txt, None, Some(position))?;
         Ok(())
     }
 }

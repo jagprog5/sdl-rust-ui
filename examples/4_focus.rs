@@ -13,7 +13,7 @@ use tiny_sdl2_gui::{
         button::{Button, DefaultButtonStyle},
         checkbox::{CheckBox, DefaultCheckBoxStyle},
         single_line_label::{DefaultSingleLineLabelState, SingleLineLabel},
-        widget::{draw_gui, update_gui, SDLEvent},
+        update_gui, SDLEvent, Widget,
     },
 };
 
@@ -41,7 +41,9 @@ fn main() -> std::process::ExitCode {
 
     let font_manager = Cell::new(Some(FontManager::new(&ttf_context, &font_file_contents)));
     #[cfg(feature = "sdl2-mixer")]
-    let sound_manager = Cell::new(Some(tiny_sdl2_gui::util::audio::SoundManager::new(std::time::Duration::from_secs(30))));
+    let sound_manager = Cell::new(Some(tiny_sdl2_gui::util::audio::SoundManager::new(
+        std::time::Duration::from_secs(30),
+    )));
 
     #[cfg(feature = "sdl2-mixer")]
     let focus_sound_path = Path::new(".")
@@ -61,11 +63,9 @@ fn main() -> std::process::ExitCode {
         .window("shift tab! mouse!", WIDTH, HEIGHT)
         .resizable()
         .position_centered()
-        .build().unwrap();
-    let mut canvas = window
-        .into_canvas()
-        .present_vsync()
-        .build().unwrap();
+        .build()
+        .unwrap();
+    let mut canvas = window.into_canvas().present_vsync().build().unwrap();
     let texture_creator = canvas.texture_creator();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
@@ -73,7 +73,13 @@ fn main() -> std::process::ExitCode {
     #[cfg(feature = "sdl2-mixer")]
     let _audio = sdl_context.audio().unwrap();
     #[cfg(feature = "sdl2-mixer")]
-    sdl2::mixer::open_audio(44_100, sdl2::mixer::AUDIO_S16LSB, sdl2::mixer::DEFAULT_CHANNELS, 1_024).unwrap();
+    sdl2::mixer::open_audio(
+        44_100,
+        sdl2::mixer::AUDIO_S16LSB,
+        sdl2::mixer::DEFAULT_CHANNELS,
+        1_024,
+    )
+    .unwrap();
     #[cfg(feature = "sdl2-mixer")]
     let _mixer_context = sdl2::mixer::init(sdl2::mixer::InitFlag::MP3).unwrap();
     #[cfg(feature = "sdl2-mixer")]
@@ -121,20 +127,22 @@ fn main() -> std::process::ExitCode {
     let checkbox0_focus_id = Cell::new(checkbox0_focus_id);
 
     #[cfg(feature = "sdl2-mixer")]
-    let focus_press_sound_style = tiny_sdl2_gui::widget::checkbox::DefaultFocusPressWidgetSoundStyle {
-        sound_manager: &sound_manager,
-        focus_sound_path: Some(&focus_sound_path),
-        press_sound_path: Some(&press_sound_path),
-        release_sound_path: Default::default(),
-    };
+    let focus_press_sound_style =
+        tiny_sdl2_gui::widget::checkbox::DefaultFocusPressWidgetSoundStyle {
+            sound_manager: &sound_manager,
+            focus_sound_path: Some(&focus_sound_path),
+            press_sound_path: Some(&press_sound_path),
+            release_sound_path: Default::default(),
+        };
     #[cfg(not(feature = "sdl2-mixer"))]
-    let focus_press_sound_style = tiny_sdl2_gui::widget::checkbox::EmptyFocusPressWidgetSoundStyle {};
+    let focus_press_sound_style =
+        tiny_sdl2_gui::widget::checkbox::EmptyFocusPressWidgetSoundStyle {};
 
     let mut checkbox0 = CheckBox::new(
         &check_states[0],
         RefCircularUIDCell(&checkbox0_focus_id),
         Box::new(DefaultCheckBoxStyle {}),
-        Box::new(focus_press_sound_style.clone()),
+        Box::new(focus_press_sound_style),
         &texture_creator,
     );
 
@@ -143,7 +151,7 @@ fn main() -> std::process::ExitCode {
         &check_states[1],
         *RefCircularUIDCell(&binding).set_after(&checkbox0.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
-        Box::new(focus_press_sound_style.clone()),
+        Box::new(focus_press_sound_style),
         &texture_creator,
     );
 
@@ -152,7 +160,7 @@ fn main() -> std::process::ExitCode {
         &check_states[2],
         *RefCircularUIDCell(&binding).set_after(&checkbox1.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
-        Box::new(focus_press_sound_style.clone()),
+        Box::new(focus_press_sound_style),
         &texture_creator,
     );
 
@@ -161,7 +169,7 @@ fn main() -> std::process::ExitCode {
         &check_states[3],
         *RefCircularUIDCell(&binding).set_after(&checkbox2.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
-        Box::new(focus_press_sound_style.clone()),
+        Box::new(focus_press_sound_style),
         &texture_creator,
     );
 
@@ -170,7 +178,7 @@ fn main() -> std::process::ExitCode {
         &check_states[4],
         *RefCircularUIDCell(&binding).set_after(&checkbox3.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
-        Box::new(focus_press_sound_style.clone()),
+        Box::new(focus_press_sound_style),
         &texture_creator,
     );
 
@@ -179,7 +187,7 @@ fn main() -> std::process::ExitCode {
         &check_states[5],
         *RefCircularUIDCell(&checkbox5_focus_id).set_after(&checkbox4.focus_id),
         Box::new(DefaultCheckBoxStyle {}),
-        Box::new(focus_press_sound_style.clone()),
+        Box::new(focus_press_sound_style),
         &texture_creator,
     );
 
@@ -196,7 +204,7 @@ fn main() -> std::process::ExitCode {
         }),
         RefCircularUIDCell(&button_focus_id),
         Box::new(button_style),
-        Box::new(focus_press_sound_style.clone()),
+        Box::new(focus_press_sound_style),
         &texture_creator,
     );
 
@@ -237,20 +245,20 @@ fn main() -> std::process::ExitCode {
             }
         }
 
-        let empty = events_accumulator.len() == 0; // lower cpu usage when idle
+        let empty = events_accumulator.is_empty(); // lower cpu usage when idle
 
         if !empty {
             match update_gui(
                 &mut layout,
-                &mut canvas,
                 &mut events_accumulator,
                 Some(&mut focus_manager),
+                &canvas,
             ) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
-            }
+            };
             FocusManager::default_start_focus_behavior(
                 &mut focus_manager,
                 &mut events_accumulator,
@@ -260,28 +268,20 @@ fn main() -> std::process::ExitCode {
 
             // if unprocessed escape key
             for e in events_accumulator.iter_mut().filter(|e| e.available()) {
-                match e.e {
-                    sdl2::event::Event::KeyDown {
+                if let sdl2::event::Event::KeyDown {
                         keycode: Some(sdl2::keyboard::Keycode::Escape),
                         repeat: false,
                         ..
-                    } => {
-                        e.set_consumed(); // intentional redundant
-                        break 'running;
-                    }
-                    _ => {}
+                    } = e.e {
+                    e.set_consumed(); // intentional redundant
+                    break 'running;
                 }
             }
             events_accumulator.clear(); // clear after use
 
             canvas.set_draw_color(background_color.get());
             canvas.clear();
-            match draw_gui(
-                &mut layout,
-                &mut canvas,
-                &mut events_accumulator,
-                Some(&mut focus_manager),
-            ) {
+            match layout.draw(&mut canvas, Some(&mut focus_manager)) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
@@ -289,7 +289,6 @@ fn main() -> std::process::ExitCode {
             }
             canvas.present();
         }
-
     }
     std::process::ExitCode::SUCCESS
 }

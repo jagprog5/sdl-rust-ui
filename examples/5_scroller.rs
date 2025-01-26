@@ -13,7 +13,7 @@ use tiny_sdl2_gui::{
         border::{Bevel, Border, Empty, Gradient, Line},
         checkbox::{CheckBox, DefaultCheckBoxStyle},
         debug::CustomSizingControl,
-        widget::{draw_gui, update_gui, SDLEvent},
+        update_gui, SDLEvent, Widget,
     },
 };
 
@@ -30,11 +30,9 @@ fn main() -> std::process::ExitCode {
         .window("nested scroller test", WIDTH, HEIGHT)
         .resizable()
         .position_centered()
-        .build().unwrap();
-    let mut canvas = window
-        .into_canvas()
-        .present_vsync()
-        .build().unwrap();
+        .build()
+        .unwrap();
+    let mut canvas = window.into_canvas().present_vsync().build().unwrap();
     let texture_creator = canvas.texture_creator();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
@@ -126,11 +124,11 @@ fn main() -> std::process::ExitCode {
         Box::new(Bevel::default()),
     );
 
-    let mut content_background8 = SolidColorBackground {
-        color: Color::BLACK,
-        contained: &mut outer_content_border7,
-        sizing_policy: BackgroundSizingPolicy::Children,
-    };
+    let mut content_background8 = SolidColorBackground::new(
+        Color::BLACK,
+        &mut outer_content_border7,
+        BackgroundSizingPolicy::Children,
+    );
 
     #[cfg(feature = "noise")]
     let mut content_background9 = tiny_sdl2_gui::widget::background::SoftwareRenderBackground::new(
@@ -162,20 +160,20 @@ fn main() -> std::process::ExitCode {
             }
         }
 
-        let empty = events_accumulator.len() == 0; // lower cpu usage when idle
+        let empty = events_accumulator.is_empty(); // lower cpu usage when idle
 
         if !empty {
             match update_gui(
                 &mut content_background9,
-                &mut canvas,
                 &mut events_accumulator,
                 Some(&mut focus_manager),
+                &canvas,
             ) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
                 }
-            }
+            };
             FocusManager::default_start_focus_behavior(
                 &mut focus_manager,
                 &mut events_accumulator,
@@ -183,32 +181,24 @@ fn main() -> std::process::ExitCode {
                 checkbox_focus_id.uid(),
             );
             for e in events_accumulator.iter_mut().filter(|e| e.available()) {
-                match e.e {
-                    sdl2::event::Event::KeyDown {
+                if let sdl2::event::Event::KeyDown {
                         keycode: Some(sdl2::keyboard::Keycode::Escape),
                         repeat,
                         ..
-                    } => {
-                        // if unprocessed escape key
-                        e.set_consumed(); // intentional redundant
-                        if repeat {
-                            continue;
-                        }
-                        break 'running;
+                    } = e.e {
+                    // if unprocessed escape key
+                    e.set_consumed(); // intentional redundant
+                    if repeat {
+                        continue;
                     }
-                    _ => {}
+                    break 'running;
                 }
             }
             events_accumulator.clear(); // clear after use
-            
+
             canvas.set_draw_color(Color::BLACK);
             canvas.clear();
-            match draw_gui(
-                &mut content_background9,
-                &mut canvas,
-                &mut events_accumulator,
-                Some(&mut focus_manager),
-            ) {
+            match content_background9.draw(&mut canvas, Some(&mut focus_manager)) {
                 Ok(()) => {}
                 Err(msg) => {
                     debug_assert!(false, "{}", msg); // infallible in prod
@@ -216,7 +206,6 @@ fn main() -> std::process::ExitCode {
             }
             canvas.present();
         }
-
     }
     std::process::ExitCode::SUCCESS
 }

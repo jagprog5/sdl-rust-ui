@@ -3,13 +3,14 @@ use std::cell::Cell;
 use sdl2::{
     event::WindowEvent,
     mouse::{MouseButton, SystemCursor},
+    render::ClippingRect,
 };
 
 use crate::{
-    util::{length::AspectRatioPreferredDirection, rect::FRect},
+    util::{focus::FocusManager, length::AspectRatioPreferredDirection, rect::FRect},
     widget::{
         debug::CustomSizingControl,
-        widget::{place, ConsumedStatus, Widget, WidgetEvent},
+        {place, ConsumedStatus, Widget, WidgetUpdateEvent},
     },
 };
 
@@ -24,15 +25,11 @@ enum DragState {
     Dragging((i32, i32)),
 }
 
+#[derive(Default)]
 pub enum ScrollAspectRatioDirectionPolicy {
+    #[default]
     Inherit,
     Literal(AspectRatioPreferredDirection),
-}
-
-impl Default for ScrollAspectRatioDirectionPolicy {
-    fn default() -> Self {
-        ScrollAspectRatioDirectionPolicy::Inherit
-    }
 }
 
 pub enum ScrollerSizingPolicy {
@@ -45,6 +42,7 @@ pub enum ScrollerSizingPolicy {
     Custom(CustomSizingControl, ScrollAspectRatioDirectionPolicy),
 }
 
+#[derive(Default)]
 struct ScrollerCursorCache {
     /// this type is:
     ///  - outer optional, is the cache set or not
@@ -88,23 +86,16 @@ impl ScrollerCursorCache {
             let cursor_result = sdl2::mouse::Cursor::from_system(cursor_to_request);
             debug_assert!(cursor_result.is_ok());
             let cursor_optional = cursor_result.ok();
-            cursor_optional.as_ref().map(|cursor| cursor.set());
+            if let Some(cursor) = cursor_optional.as_ref() {
+                cursor.set()
+            }
             self.cursor = Some(cursor_optional);
         }
     }
 }
 
-impl Default for ScrollerCursorCache {
-    fn default() -> Self {
-        Self {
-            cursor: Default::default(),
-            scroll_x_enabled: Default::default(),
-            scroll_y_enabled: Default::default(),
-        }
-    }
-}
-
-/// translates its content - facilitates scrolling
+/// translates its content - facilitates scrolling. also applies clipping rect
+/// to contained content
 ///
 /// does NOT do any form of culling for widgets which are not visible in the
 /// current viewing area - all contained widgets are updated and drawn. it is
@@ -133,6 +124,11 @@ pub struct Scroller<'sdl, 'state> {
     /// true restricts the scrolling to keep the contained in frame
     pub restrict_scroll: bool,
 
+    /// calculated during update, stored for draw.
+    /// used for clipping rect calculations
+    previous_clipping_rect_from_update: ClippingRect,
+    position_from_update: FRect,
+
     cursor_cache: ScrollerCursorCache,
 }
 
@@ -156,6 +152,8 @@ impl<'sdl, 'state> Scroller<'sdl, 'state> {
             restrict_scroll: true,
             sizing_policy: ScrollerSizingPolicy::Children,
             cursor_cache: Default::default(),
+            previous_clipping_rect_from_update: ClippingRect::None,
+            position_from_update: Default::default(),
         }
     }
 }
@@ -341,7 +339,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
         }
     }
 
-    fn update(&mut self, mut event: WidgetEvent) -> Result<(), String> {
+    fn update(&mut self, mut event: WidgetUpdateEvent) -> Result<(), String> {
         if let DragState::Dragging(_) = self.drag_state {
             // consume related events if currently dragging. do this before
             // passing event to contained
@@ -363,10 +361,13 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
         let mut scroll_x = self.scroll_x.get();
         let mut scroll_y = self.scroll_y.get();
 
-        let previous_clipping_rect = event.canvas.clip_rect();
-        let clipping_rect =
-            clipping_rect_intersection(previous_clipping_rect, event.position.into());
-        event.canvas.set_clip_rect(clipping_rect);
+        self.previous_clipping_rect_from_update = event.clipping_rect;
+        self.position_from_update = event.position;
+
+        let clip_rect_for_contained = clipping_rect_intersection(
+            self.previous_clipping_rect_from_update,
+            self.position_from_update.into(),
+        );
 
         let position_for_contained = match &self.sizing_policy {
             ScrollerSizingPolicy::Children => {
@@ -402,12 +403,14 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
             w: position_for_contained.w,
             h: position_for_contained.h,
         };
+        let mut event_for_contained = event.sub_event(position_for_contained_shifted);
+        // set clipping rect in dup as to not affect any widgets that might come
+        // after this one
+        event_for_contained.clipping_rect = clip_rect_for_contained;
 
-        let update_result = self
-            .contained
-            .update(event.sub_event(position_for_contained_shifted));
+        let before_update_scroll_pos = (scroll_x, scroll_y);
 
-        event.canvas.set_clip_rect(previous_clipping_rect); // restore
+        self.contained.update(event_for_contained)?;
 
         // handle mouse wheel. happens after update, as it allows contained
         // to consume it first (for example, with nested scrolls)
@@ -430,7 +433,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                     window_id,
                     ..
                 } => {
-                    if event.canvas.window().id() != window_id {
+                    if event.window_id != window_id {
                         return; // not for me!
                     }
                     let mut multiplier: i32 = match direction {
@@ -446,7 +449,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                         .map(|pos| pos.contains_point((mouse_x, mouse_y)))
                         .unwrap_or(false)
                     {
-                        let point_contained_in_clipping_rect = match clipping_rect {
+                        let point_contained_in_clipping_rect = match clip_rect_for_contained {
                             sdl2::render::ClippingRect::Some(rect) => {
                                 rect.contains_point((mouse_x, mouse_y))
                             }
@@ -474,28 +477,24 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                     }
                 }
                 sdl2::event::Event::Window {
-                    win_event,
+                    win_event:
+                        WindowEvent::Hidden
+                        | WindowEvent::Minimized
+                        | WindowEvent::Leave
+                        | WindowEvent::FocusLost
+                        | WindowEvent::Close,
                     ..
                 } => {
-                    match win_event {
-                        WindowEvent::Hidden |
-                        WindowEvent::Minimized |
-                        WindowEvent::Leave |
-                        WindowEvent::FocusLost |
-                        WindowEvent::Close => {
-                            // same functionality as below for mouse button up,
-                            // but don't consume the event
-                            self.drag_state = DragState::None;
-                            if self.restrict_scroll {
-                                apply_scroll_restrictions(
-                                    position_for_contained,
-                                    event.position,
-                                    &mut scroll_y,
-                                    &mut scroll_x,
-                                );
-                            }
-                        }
-                        _ => {}
+                    // same functionality as below for mouse button up,
+                    // but don't consume the event
+                    self.drag_state = DragState::None;
+                    if self.restrict_scroll {
+                        apply_scroll_restrictions(
+                            position_for_contained,
+                            event.position,
+                            &mut scroll_y,
+                            &mut scroll_x,
+                        );
                     }
                 }
                 sdl2::event::Event::MouseButtonUp {
@@ -525,12 +524,12 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                     window_id,
                     ..
                 } => {
-                    if event.canvas.window().id() != window_id {
+                    if event.window_id != window_id {
                         return; // not for me!
                     }
                     let pos: Option<sdl2::rect::Rect> = event.position.into();
                     if pos.map(|pos| pos.contains_point((x, y))).unwrap_or(false) {
-                        let point_contained_in_clipping_rect = match clipping_rect {
+                        let point_contained_in_clipping_rect = match clip_rect_for_contained {
                             sdl2::render::ClippingRect::Some(rect) => rect.contains_point((x, y)),
                             sdl2::render::ClippingRect::Zero => false,
                             sdl2::render::ClippingRect::None => true,
@@ -563,7 +562,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                     if let DragState::None = self.drag_state {
                         return;
                     }
-                    if event.canvas.window().id() != window_id {
+                    if event.window_id != window_id {
                         // ignore drag through windows. this would only make
                         // sense if there was some relative coordinate system,
                         // which I don't plan on doing
@@ -571,8 +570,10 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                     }
                     e.set_consumed_by_layout();
                     if let DragState::DragStart((start_x, start_y)) = self.drag_state {
-                        let dragged_far_enough_x = (start_x - x).abs() as u32 > self.drag_deadzone;
-                        let dragged_far_enough_y = (start_y - y).abs() as u32 > self.drag_deadzone;
+                        let dragged_far_enough_x =
+                            (start_x - x).unsigned_abs() > self.drag_deadzone;
+                        let dragged_far_enough_y =
+                            (start_y - y).unsigned_abs() > self.drag_deadzone;
                         let trigger_x = dragged_far_enough_x && self.scroll_x_enabled;
                         let trigger_y = dragged_far_enough_y && self.scroll_y_enabled;
                         if trigger_x || trigger_y {
@@ -595,7 +596,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
 
         // sync changes. the scroll_x and scroll_y local vars should not have
         // been changed if the scroll wasn't enabled, with the exception of
-        // scroll restrictions
+        // scroll restrictions (and e.g. changing window size)
         self.scroll_x.set(scroll_x);
         self.scroll_y.set(scroll_y);
 
@@ -610,42 +611,32 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
             }
         }
 
-        update_result
+        // account for changes between when update was called and the events were consumed
+        self.contained.update_adjust_position((
+            scroll_x - before_update_scroll_pos.0,
+            scroll_y - before_update_scroll_pos.1,
+        ));
+        Ok(())
     }
 
-    fn draw(&mut self, mut event: WidgetEvent) -> Result<(), String> {
-        // translate events before sending to contained. then translate back again when done
-        let scroll_x = self.scroll_x.get();
-        let scroll_y = self.scroll_y.get();
+    fn update_adjust_position(&mut self, pos_delta: (i32, i32)) {
+        self.position_from_update.x += pos_delta.0 as f32;
+        self.position_from_update.y += pos_delta.1 as f32;
+        self.contained.update_adjust_position(pos_delta);
+    }
 
-        let previous_clipping_rect = event.canvas.clip_rect();
-        let clipping_rect =
-            clipping_rect_intersection(previous_clipping_rect, event.position.into());
-        event.canvas.set_clip_rect(clipping_rect);
-        event.position.x += scroll_x as f32;
-        event.position.y += scroll_y as f32;
-
-        let position_for_contained = match &self.sizing_policy {
-            ScrollerSizingPolicy::Children => event.position,
-            ScrollerSizingPolicy::Custom(_, dir) => {
-                let dir = match dir {
-                    // scroller exactly passes sizing information to parent in this
-                    // case, no need to place again
-                    ScrollAspectRatioDirectionPolicy::Inherit => event.aspect_ratio_priority,
-                    // whatever the sizing of the parent, properly place the
-                    // contained within it
-                    ScrollAspectRatioDirectionPolicy::Literal(dir) => *dir,
-                };
-                place(self.contained, event.position, dir)?
-            }
-        };
-
-        let draw_result = self.contained.draw(event.sub_event(position_for_contained));
-
-        event.canvas.set_clip_rect(previous_clipping_rect); // restore
-        event.position.x -= scroll_x as f32;
-        event.position.y -= scroll_y as f32;
-
+    fn draw(
+        &mut self,
+        canvas: &mut sdl2::render::WindowCanvas,
+        focus_manager: Option<&FocusManager>,
+    ) -> Result<(), String> {
+        debug_assert!(canvas.clip_rect() == self.previous_clipping_rect_from_update);
+        canvas.set_clip_rect(clipping_rect_intersection(
+            self.previous_clipping_rect_from_update,
+            self.position_from_update.into(),
+        ));
+        let draw_result = self.contained.draw(canvas, focus_manager);
+        canvas.set_clip_rect(self.previous_clipping_rect_from_update); // restore
         draw_result
     }
 }

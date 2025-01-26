@@ -138,7 +138,7 @@ pub fn place(
     if len > parent {
         return (parent - len) * (1. - min_fail_policy.0);
     }
-    return 0.;
+    0.
 }
 
 /// what is the preferred portion of the parent's length that this length should
@@ -164,11 +164,7 @@ impl PreferredPortion {
     /// suppose multiple portions are sharing the same length. give the number
     /// of portions, the total portion together (ideally should add to 1 but
     /// doesn't have to), how long is this portion of the parent
-    pub fn weighted_portion(
-        &self,
-        sum_portions: PreferredPortion,
-        parent_len: f32,
-    ) -> f32 {
+    pub fn weighted_portion(&self, sum_portions: PreferredPortion, parent_len: f32) -> f32 {
         let p = if sum_portions.0 == 0. {
             // entirely possible that each component is zero preferred portion
             PreferredPortion(0.)
@@ -187,44 +183,35 @@ impl Default for PreferredPortion {
 }
 
 #[derive(Clone, Copy)]
+#[derive(Default)]
 pub enum MinLenPolicy {
     /// inherit the dimensions of the contained thing
+    #[default]
     Children,
     /// min len is plainly stated, ignoring the underlying thing's dimensions
     Literal(MinLen),
 }
 
-impl Default for MinLenPolicy {
-    fn default() -> Self {
-        MinLenPolicy::Children
-    }
-}
 
 #[derive(Clone, Copy)]
+#[derive(Default)]
 pub enum MaxLenPolicy {
     /// inherit the dimensions of the contained thing
+    #[default]
     Children,
     /// max len is plainly stated, ignoring the underlying thing's dimensions
     Literal(MaxLen),
 }
 
-impl Default for MaxLenPolicy {
-    fn default() -> Self {
-        MaxLenPolicy::Children
-    }
-}
 
 #[derive(Copy, Clone, Debug)]
+#[derive(Default)]
 pub enum AspectRatioPreferredDirection {
+    #[default]
     WidthFromHeight,
     HeightFromWidth,
 }
 
-impl Default for AspectRatioPreferredDirection {
-    fn default() -> Self {
-        AspectRatioPreferredDirection::WidthFromHeight
-    }
-}
 
 impl AspectRatioPreferredDirection {
     pub fn width_from_height(ratio: f32, h: f32) -> f32 {
