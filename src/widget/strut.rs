@@ -27,12 +27,12 @@ impl Strut {
     }
 
     // prefers to be at its largest, but will shrink as needed
-    pub fn shrinkable(w: f32, h: f32) -> Self {
+    pub fn shrinkable(max_w: MaxLen, max_h: MaxLen) -> Self {
         Strut {
             min_w: MinLen::LAX,
             min_h: MinLen::LAX,
-            max_w: MaxLen(w),
-            max_h: MaxLen(h),
+            max_w,
+            max_h,
             preferred_w: PreferredPortion::FULL,
             preferred_h: PreferredPortion::FULL,
         }
@@ -43,7 +43,7 @@ impl Widget for Strut {
     fn draw(
         &mut self,
         _canvas: &mut sdl2::render::WindowCanvas,
-        _focus_manager: Option<&FocusManager>,
+        _focus_manager: &FocusManager,
     ) -> Result<(), String> {
         Ok(())
     }

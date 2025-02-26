@@ -6,30 +6,29 @@ This is a (in progress) library for creating [immediate mode](https://en.wikiped
 
 For usage, see the [examples](./examples/) and documentation.
 
-# Widget
+# What's Special?
 
-A [widget](./src/widget/widget.rs) is a part of the interface. They are composed in a tree hierarchy in which a parent can contain some number of children.
+## Screen Updates
+
+Some GUI frameworks assume that the screen updates all the time, e.g. 60fps.
+Especially immediate mode GUIs. This makes the update order pretty lenient. If A
+depends on B, and A is updated before B, then A will be drawn with B's state
+from one frame behind. For most frameworks this doesn't matter, since once the
+next frame comes around it will get back in sync with the underlying data.
+
+With this framework, the screen only needs to be updated once something happens.
+Everything will look as it should _within that same frame_. For the provided
+examples, the idle CPU usage is very near 0.
 
 ## Sizing Information
 
-A widget provides sizing information to be used by the parent:
+Widgets compose a tree hierarchy. Parent widgets receive sizing information from
+the children and layout appropriately.
 
-- for both the width and height, each:
-    - minimum length
-    - maximum length
-    - preferred portion (e.g. 50% of parent)
-    - length failure policies (offset applied if a minimum or maximum can't be fulfilled by parent)
-- requested aspect ratio
+I haven't seen sizing or layouts expressed in this specific way; 
+most frameworks use a preferred size. Here, a preferred portion is used instead. This works well for letting the UI scale with the window size. There's also support for aspect ratios and "length failure" policies (what happens if a minimum or maximum can't be fulfilled by the parent). 
 
-## Drawing
-
-The parent accumulates sizing information from all the children and determines their positions for this frame. Once the positions are known, they are all updated, then all drawn.
-
-Although sizing information is recalculated each frame, widgets should cache and reuse textures when appropriate.
-
-## std-lib
-
-Widgets
+# std-lib
  - [vertical layout](./src/layout/vertical_layout.rs)
  - [horizontal layout](./src/layout/horizontal_layout.rs)
  - [scroll area](./src/layout/scroller.rs)
@@ -40,6 +39,6 @@ Widgets
  - [border](./src/widget/border.rs), contains a widget in a border with a border style
  - [texture](./src/widget/texture.rs), generic texture display with sizing control
  - [single](./src/widget/single_line_label.rs) and [multiline](./src/widget/multi_line_label.rs) labels
- - basic [single line text input](./src/widget/single_line_text_input.rs)
+ - [single line text input](./src/widget/single_line_text_input.rs)
  - [button](./src/widget/button.rs)
  - [checkbox](./src/widget/checkbox.rs)

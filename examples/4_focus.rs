@@ -1,19 +1,19 @@
-use std::{cell::Cell, fs::File, io::Read, path::Path};
+use std::{cell::Cell, fs::File, io::Read, path::Path, time::Duration};
 
-use rand::Rng;
-use sdl2::pixels::Color;
+use example_common::gui_loop::gui_loop;
+use sdl2::{mouse::MouseButton, pixels::Color};
 use tiny_sdl2_gui::{
     layout::{horizontal_layout::HorizontalLayout, vertical_layout::VerticalLayout},
     util::{
-        focus::{CircularUID, FocusManager, PRNGBytes, RefCircularUIDCell, UID},
+        focus::{FocusID, FocusManager},
         font::{FontManager, SingleLineTextRenderType, TextRenderer},
         length::{MaxLen, MaxLenPolicy},
     },
     widget::{
-        button::{Button, DefaultButtonStyle},
+        button::{Button, LabelButtonStyle},
         checkbox::{CheckBox, DefaultCheckBoxStyle},
-        single_line_label::{DefaultSingleLineLabelState, SingleLineLabel},
-        update_gui, SDLEvent, Widget,
+        single_line_label::SingleLineLabel,
+        update_gui, Widget,
     },
 };
 
@@ -23,6 +23,7 @@ mod example_common;
 fn main() -> std::process::ExitCode {
     const WIDTH: u32 = 300;
     const HEIGHT: u32 = 200;
+    const MAX_DELAY: Duration = Duration::from_millis(17);
 
     let check_states = (0..6).map(|_| Cell::<bool>::new(false)).collect::<Vec<_>>();
 
@@ -87,44 +88,17 @@ fn main() -> std::process::ExitCode {
 
     let mut focus_manager = FocusManager::default();
 
-    let button_text = DefaultSingleLineLabelState {
-        inner: Cell::new("button".into()),
-    };
     let button_label = SingleLineLabel::new(
-        &button_text,
+        "button".into(),
         SingleLineTextRenderType::Blended(Color::WHITE),
         Box::new(TextRenderer::new(&font_manager)),
         &texture_creator,
     );
-    let button_style = DefaultButtonStyle {
+    let button_style = LabelButtonStyle {
         label: button_label,
     };
 
     let background_color = Cell::new(Color::BLACK);
-    let mut layout = VerticalLayout::default();
-    let mut top_layout = HorizontalLayout::default();
-    let mut bottom_layout = HorizontalLayout::default();
-
-    top_layout.max_w_policy =
-        tiny_sdl2_gui::layout::vertical_layout::MajorAxisMaxLenPolicy::Together(
-            MaxLenPolicy::Literal(MaxLen(0.)),
-        );
-
-    let mut rng = rand::thread_rng();
-
-    let mut get_prng_bytes = || {
-        let mut bytes = [0u8; 8];
-        rng.fill(&mut bytes);
-        PRNGBytes(bytes)
-    };
-
-    // step by step
-    let checkbox0_focus_id = get_prng_bytes();
-    let checkbox0_focus_id = UID::new(checkbox0_focus_id);
-    let checkbox0_focus_id = CircularUID::new(checkbox0_focus_id);
-    // checkbox borrows the focus id. since it's in a cell, modification can
-    // still be made
-    let checkbox0_focus_id = Cell::new(checkbox0_focus_id);
 
     #[cfg(feature = "sdl2-mixer")]
     let focus_press_sound_style =
@@ -138,61 +112,79 @@ fn main() -> std::process::ExitCode {
     let focus_press_sound_style =
         tiny_sdl2_gui::widget::checkbox::EmptyFocusPressWidgetSoundStyle {};
 
-    let mut checkbox0 = CheckBox::new(
+    let checkbox0 = CheckBox::new(
         &check_states[0],
-        RefCircularUIDCell(&checkbox0_focus_id),
+        FocusID {
+            previous: "button".to_owned(),
+            me: "0".to_owned(),
+            next: "1".to_owned(),
+        },
         Box::new(DefaultCheckBoxStyle {}),
         Box::new(focus_press_sound_style),
         &texture_creator,
     );
 
-    let binding = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
-    let mut checkbox1 = CheckBox::new(
+    let checkbox1 = CheckBox::new(
         &check_states[1],
-        *RefCircularUIDCell(&binding).set_after(&checkbox0.focus_id),
+        FocusID {
+            previous: "0".to_owned(),
+            me: "1".to_owned(),
+            next: "2".to_owned(),
+        },
         Box::new(DefaultCheckBoxStyle {}),
         Box::new(focus_press_sound_style),
         &texture_creator,
     );
 
-    let binding = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
-    let mut checkbox2 = CheckBox::new(
+    let checkbox2 = CheckBox::new(
         &check_states[2],
-        *RefCircularUIDCell(&binding).set_after(&checkbox1.focus_id),
+        FocusID {
+            previous: "1".to_owned(),
+            me: "2".to_owned(),
+            next: "3".to_owned(),
+        },
         Box::new(DefaultCheckBoxStyle {}),
         Box::new(focus_press_sound_style),
         &texture_creator,
     );
 
-    let binding = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
-    let mut checkbox3 = CheckBox::new(
+    let checkbox3 = CheckBox::new(
         &check_states[3],
-        *RefCircularUIDCell(&binding).set_after(&checkbox2.focus_id),
+        FocusID {
+            previous: "2".to_owned(),
+            me: "3".to_owned(),
+            next: "4".to_owned(),
+        },
         Box::new(DefaultCheckBoxStyle {}),
         Box::new(focus_press_sound_style),
         &texture_creator,
     );
 
-    let binding = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
-    let mut checkbox4 = CheckBox::new(
+    let checkbox4 = CheckBox::new(
         &check_states[4],
-        *RefCircularUIDCell(&binding).set_after(&checkbox3.focus_id),
+        FocusID {
+            previous: "3".to_owned(),
+            me: "4".to_owned(),
+            next: "5".to_owned(),
+        },
         Box::new(DefaultCheckBoxStyle {}),
         Box::new(focus_press_sound_style),
         &texture_creator,
     );
 
-    let checkbox5_focus_id = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
-    let mut checkbox5 = CheckBox::new(
+    let checkbox5 = CheckBox::new(
         &check_states[5],
-        *RefCircularUIDCell(&checkbox5_focus_id).set_after(&checkbox4.focus_id),
+        FocusID {
+            previous: "4".to_owned(),
+            me: "5".to_owned(),
+            next: "button".to_owned(),
+        },
         Box::new(DefaultCheckBoxStyle {}),
         Box::new(focus_press_sound_style),
         &texture_creator,
     );
 
-    let button_focus_id = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
-    let mut button = Button::new(
+    let button = Button::new(
         Box::new(|| {
             println!("Clicked!!!");
             if background_color.get() == Color::BLACK {
@@ -202,93 +194,97 @@ fn main() -> std::process::ExitCode {
             }
             Ok(())
         }),
-        RefCircularUIDCell(&button_focus_id),
+        FocusID {
+            previous: "5".to_owned(),
+            me: "button".to_owned(),
+            next: "0".to_owned(),
+        },
         Box::new(button_style),
         Box::new(focus_press_sound_style),
         &texture_creator,
     );
 
-    top_layout.elems.push(&mut checkbox0);
-    top_layout.elems.push(&mut checkbox1);
-    top_layout.elems.push(&mut checkbox2);
-    bottom_layout.elems.push(&mut checkbox3);
-    bottom_layout.elems.push(&mut checkbox4);
-    bottom_layout.elems.push(&mut checkbox5);
-    layout.elems.push(&mut top_layout);
-    layout.elems.push(&mut bottom_layout);
-    layout.elems.push(&mut button);
+    let mut top_layout = HorizontalLayout::default();
+    let mut bottom_layout = HorizontalLayout::default();
+    let mut layout = VerticalLayout::default();
 
-    // testing modification after layout is constructed. note that layout
-    // constructions mutably borrows the components. but we can still do the
-    // modification of the focus ids! this allows elements to be added or
-    // removed to/from the focus loop on the fly
-    let mut button_focus_id_get = button_focus_id.get();
-    let mut checkbox0_focus_id_get = checkbox0_focus_id.get();
-    let mut checkbox5_focus_id_get = checkbox5_focus_id.get();
-    button_focus_id_get
-        .set_after(&mut checkbox5_focus_id_get)
-        .set_before(&mut checkbox0_focus_id_get);
-    button_focus_id.set(button_focus_id_get);
-    checkbox0_focus_id.set(checkbox0_focus_id_get);
-    checkbox5_focus_id.set(checkbox5_focus_id_get);
+    top_layout.max_w_policy =
+        tiny_sdl2_gui::layout::vertical_layout::MajorAxisMaxLenPolicy::Together(
+            MaxLenPolicy::Literal(MaxLen(0.)),
+        );
 
-    let mut events_accumulator: Vec<SDLEvent> = Vec::new();
-    'running: loop {
-        for event in event_pump.poll_iter() {
-            match event {
-                sdl2::event::Event::Quit { .. } => {
-                    break 'running;
-                }
-                _ => {
-                    events_accumulator.push(SDLEvent::new(event));
-                }
+    top_layout.elems.push(Box::new(checkbox0));
+    top_layout.elems.push(Box::new(checkbox1));
+    top_layout.elems.push(Box::new(checkbox2));
+    bottom_layout.elems.push(Box::new(checkbox3));
+    bottom_layout.elems.push(Box::new(checkbox4));
+    bottom_layout.elems.push(Box::new(checkbox5));
+    layout.elems.push(Box::new(top_layout));
+    layout.elems.push(Box::new(bottom_layout));
+    layout.elems.push(Box::new(button));
+
+    gui_loop(MAX_DELAY, &mut event_pump, |events| {
+        // UPDATE
+        match update_gui(
+            &mut layout,
+            events,
+            &mut focus_manager,
+            &canvas,
+        ) {
+            Ok(()) => {}
+            Err(msg) => {
+                debug_assert!(false, "{}", msg); // infallible in prod
             }
-        }
+        };
 
-        let empty = events_accumulator.is_empty(); // lower cpu usage when idle
+        FocusManager::default_start_focus_behavior(
+            &mut focus_manager,
+            events,
+            "0",
+            "button",
+        );
 
-        if !empty {
-            match update_gui(
-                &mut layout,
-                &mut events_accumulator,
-                Some(&mut focus_manager),
-                &canvas,
-            ) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
-                }
-            };
-            FocusManager::default_start_focus_behavior(
-                &mut focus_manager,
-                &mut events_accumulator,
-                checkbox0_focus_id.get().uid(),
-                button_focus_id.get().uid(),
-            );
-
-            // if unprocessed escape key
-            for e in events_accumulator.iter_mut().filter(|e| e.available()) {
-                if let sdl2::event::Event::KeyDown {
-                        keycode: Some(sdl2::keyboard::Keycode::Escape),
-                        repeat: false,
-                        ..
-                    } = e.e {
+        // after gui update, use whatever is left
+        for e in events.iter_mut().filter(|e| e.available()) {
+            match e.e {
+                sdl2::event::Event::MouseButtonUp {
+                    x,
+                    y,
+                    mouse_btn: MouseButton::Left,
+                    ..
+                } => {
                     e.set_consumed(); // intentional redundant
-                    break 'running;
+                    println!("nothing consumed the click! {:?}", (x, y));
                 }
-            }
-            events_accumulator.clear(); // clear after use
-
-            canvas.set_draw_color(background_color.get());
-            canvas.clear();
-            match layout.draw(&mut canvas, Some(&mut focus_manager)) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
+                sdl2::event::Event::KeyDown {
+                    keycode: Some(sdl2::keyboard::Keycode::Escape),
+                    repeat,
+                    ..
+                } => {
+                    // if unprocessed escape key
+                    e.set_consumed(); // intentional redundant
+                    if repeat {
+                        continue;
+                    }
+                    return true;
                 }
+                _ => {}
             }
-            canvas.present();
         }
-    }
+
+        // set background black
+        canvas.set_draw_color(background_color.get());
+        canvas.clear();
+
+        // DRAW
+        match &mut layout.draw(&mut canvas, &mut focus_manager) {
+            Ok(()) => {}
+            Err(msg) => {
+                debug_assert!(false, "{}", msg); // infallible in prod
+            }
+        }
+        canvas.present();
+        false
+    });
     std::process::ExitCode::SUCCESS
 }

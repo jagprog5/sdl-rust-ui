@@ -1,21 +1,20 @@
-use std::{cell::Cell, fs::File, io::Read, path::Path};
+use std::{cell::Cell, fs::File, io::Read, path::Path, time::Duration};
 
-use rand::Rng;
-use sdl2::pixels::Color;
+use sdl2::{mouse::MouseButton, pixels::Color};
 use tiny_sdl2_gui::{
     layout::scroller::{Scroller, ScrollerSizingPolicy},
     util::{
-        focus::{CircularUID, FocusManager, PRNGBytes, RefCircularUIDCell, UID},
+        focus::{FocusID, FocusManager},
         font::{FontManager, SingleLineTextRenderType, TextRenderer},
         length::PreferredPortion,
     },
     widget::{
         border::{Border, Empty, Gradient, Line},
-        button::{Button, DefaultButtonStyle},
+        button::{Button, LabelButtonStyle},
         checkbox::{CheckBox, DefaultCheckBoxStyle, EmptyFocusPressWidgetSoundStyle},
         debug::CustomSizingControl,
-        single_line_label::{DefaultSingleLineLabelState, SingleLineLabel},
-        update_gui, SDLEvent, Widget,
+        single_line_label::SingleLineLabel,
+        update_gui, Widget,
     },
 };
 
@@ -23,6 +22,7 @@ use tiny_sdl2_gui::{
 mod example_common;
 
 fn main() -> std::process::ExitCode {
+    const MAX_DELAY: Duration = Duration::from_millis(17);
     let mut focus_manager = FocusManager::default();
 
     let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string()).unwrap();
@@ -74,20 +74,14 @@ fn main() -> std::process::ExitCode {
     // texture creators from different canvases MUST NOT be mixed
     let texture_creator2 = canvas2.texture_creator();
 
-    let mut rng = rand::thread_rng();
-
-    let mut get_prng_bytes = || {
-        let mut bytes = [0u8; 8];
-        rng.fill(&mut bytes);
-        PRNGBytes(bytes)
-    };
-
-    let checkbox0_focus_id = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
-    let checkbox0_focus_id = RefCircularUIDCell(&checkbox0_focus_id);
     let checkbox0_state = Cell::new(false);
     let mut checkbox0 = CheckBox::new(
         &checkbox0_state,
-        checkbox0_focus_id,
+        FocusID {
+            previous: "2".into(),
+            me: "0".into(),
+            next: "1".into(),
+        },
         Box::new(DefaultCheckBoxStyle {}),
         Box::new(EmptyFocusPressWidgetSoundStyle {}),
         &texture_creator0,
@@ -95,60 +89,61 @@ fn main() -> std::process::ExitCode {
 
     // =========================
 
-    let button_text = DefaultSingleLineLabelState {
-        inner: Cell::new("button".into()),
-    };
     let button_label = SingleLineLabel::new(
-        &button_text,
+        Cell::new("button".into()).into(),
         SingleLineTextRenderType::Blended(Color::WHITE),
         Box::new(TextRenderer::new(&font_manager)),
         &texture_creator1,
     );
-    let button1_style = DefaultButtonStyle {
+    let button1_style = LabelButtonStyle {
         label: button_label,
     };
-    let button1_focus_id = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
-    let button1_focus_id = RefCircularUIDCell(&button1_focus_id);
-    let mut button1 = Button::new(
+    let button1 = Button::new(
         Box::new(|| {
             println!("Clicked!!!");
             Ok(())
         }),
-        button1_focus_id,
+        FocusID {
+            previous: "0".into(),
+            me: "1".into(),
+            next: "2".into(),
+        },
         Box::new(button1_style),
         Box::new(EmptyFocusPressWidgetSoundStyle {}),
         &texture_creator1,
     );
 
     let mut button1_border = Border::new(
-        &mut button1,
+        Box::new(button1),
         &texture_creator1,
         Box::new(Empty { width: 10 }),
     );
 
     // =========================
 
-    let checkbox2_focus_id = Cell::new(CircularUID::new(UID::new(get_prng_bytes())));
-    let checkbox2_focus_id = RefCircularUIDCell(&checkbox2_focus_id);
     let checkbox2_state = Cell::new(false);
-    let mut checkbox2 = CheckBox::new(
+    let checkbox2 = CheckBox::new(
         &checkbox2_state,
-        checkbox2_focus_id,
+        FocusID {
+            previous: "1".into(),
+            me: "2".into(),
+            next: "0".into(),
+        },
         Box::new(DefaultCheckBoxStyle {}),
         Box::new(EmptyFocusPressWidgetSoundStyle {}),
         &texture_creator2,
     );
 
     // pad the checkbox a little bit for clarity
-    let mut checkbox2_border = Border::new(
-        &mut checkbox2,
+    let checkbox2_border = Border::new(
+        Box::new(checkbox2),
         &texture_creator2,
         Box::new(Empty { width: 5 }),
     );
 
     // contain the checkbox and padding in a border
-    let mut checkbox2_border = Border::new(
-        &mut checkbox2_border,
+    let checkbox2_border = Border::new(
+        Box::new(checkbox2_border),
         &texture_creator2,
         Box::new(Line::default()),
     );
@@ -160,7 +155,7 @@ fn main() -> std::process::ExitCode {
         true,
         &inner_scroll_x,
         &inner_scroll_y,
-        &mut checkbox2_border,
+        Box::new(checkbox2_border),
     );
     let mut sizing = CustomSizingControl::default();
     sizing.preferred_w = PreferredPortion(0.8);
@@ -168,129 +163,113 @@ fn main() -> std::process::ExitCode {
     checkbox2_scroller.sizing_policy = ScrollerSizingPolicy::Custom(sizing, Default::default());
 
     let mut widget_complete_2 = Border::new(
-        &mut checkbox2_scroller,
+        Box::new(checkbox2_scroller),
         &texture_creator2,
         Box::new(Gradient::default()),
     );
 
-    // ===========================
-
-    button1_focus_id.set_after(&checkbox0_focus_id);
-    checkbox2_focus_id.set_after(&button1_focus_id);
-    checkbox0_focus_id.set_after(&checkbox2_focus_id);
-
-    let mut events_accumulator: Vec<SDLEvent> = Vec::new();
-    'running: loop {
-        for event in event_pump.poll_iter() {
-            match event {
-                sdl2::event::Event::Window { win_event, .. } => match win_event {
-                    sdl2::event::WindowEvent::Close => break 'running,
-                    _ => {
-                        events_accumulator.push(SDLEvent::new(event));
-                    }
-                },
-                sdl2::event::Event::Quit { .. } => {
-                    break 'running;
-                }
-                _ => {
-                    events_accumulator.push(SDLEvent::new(event));
-                }
+    example_common::gui_loop::gui_loop(MAX_DELAY, &mut event_pump, |events| {
+        // UPDATE
+        match update_gui(
+            &mut checkbox0,
+            events,
+            &mut focus_manager,
+            &canvas0,
+        ) {
+            Ok(()) => {}
+            Err(msg) => {
+                debug_assert!(false, "{}", msg); // infallible in prod
             }
-        }
+        };
+        match update_gui(
+            &mut button1_border,
+            events,
+            &mut focus_manager,
+            &canvas1,
+        ) {
+            Ok(()) => {}
+            Err(msg) => {
+                debug_assert!(false, "{}", msg); // infallible in prod
+            }
+        };
+        match update_gui(
+            &mut widget_complete_2,
+            events,
+            &mut focus_manager,
+            &canvas2,
+        ) {
+            Ok(()) => {}
+            Err(msg) => {
+                debug_assert!(false, "{}", msg); // infallible in prod
+            }
+        };
+        FocusManager::default_start_focus_behavior(
+            &mut focus_manager,
+            events,
+            "0",
+            "2",
+        );
 
-        // lower cpu usage when idle (could be more fine grained, only updating
-        // the relevant window instead)
-        let empty = events_accumulator.is_empty();
-
-        if !empty {
-            match update_gui(
-                &mut checkbox0,
-                &mut events_accumulator,
-                Some(&mut focus_manager),
-                &canvas0,
-            ) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
+        // after gui update, use whatever is left
+        for e in events.iter_mut().filter(|e| e.available()) {
+            match e.e {
+                sdl2::event::Event::MouseButtonUp {
+                    x,
+                    y,
+                    mouse_btn: MouseButton::Left,
+                    ..
+                } => {
+                    e.set_consumed(); // intentional redundant
+                    println!("nothing consumed the click! {:?}", (x, y));
                 }
-            };
-            match update_gui(
-                &mut button1_border,
-                &mut events_accumulator,
-                Some(&mut focus_manager),
-                &canvas1,
-            ) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
-                }
-            };
-            match update_gui(
-                &mut widget_complete_2,
-                &mut events_accumulator,
-                Some(&mut focus_manager),
-                &canvas2,
-            ) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
-                }
-            };
-            FocusManager::default_start_focus_behavior(
-                &mut focus_manager,
-                &mut events_accumulator,
-                checkbox0_focus_id.uid(),
-                checkbox2_focus_id.uid(),
-            );
-
-            for e in events_accumulator.iter_mut().filter(|e| e.available()) {
-                if let sdl2::event::Event::KeyDown {
-                        keycode: Some(sdl2::keyboard::Keycode::Escape),
-                        repeat,
-                        ..
-                    } = e.e {
+                sdl2::event::Event::KeyDown {
+                    keycode: Some(sdl2::keyboard::Keycode::Escape),
+                    repeat,
+                    ..
+                } => {
                     // if unprocessed escape key
                     e.set_consumed(); // intentional redundant
                     if repeat {
                         continue;
                     }
-                    break 'running;
+                    return true;
                 }
+                _ => {}
             }
-            events_accumulator.clear(); // clear after use
-
-            // set background black
-            canvas0.set_draw_color(sdl2::pixels::Color::BLACK);
-            canvas1.set_draw_color(sdl2::pixels::Color::BLACK);
-            canvas2.set_draw_color(sdl2::pixels::Color::BLACK);
-            canvas0.clear();
-            canvas1.clear();
-            canvas2.clear();
-
-            // DRAW
-            match checkbox0.draw(&mut canvas0, Some(&mut focus_manager)) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
-                }
-            }
-            match button1_border.draw(&mut canvas1, Some(&mut focus_manager)) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
-                }
-            }
-            match widget_complete_2.draw(&mut canvas2, Some(&mut focus_manager)) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
-                }
-            }
-
-            canvas0.present();
-            canvas1.present();
-            canvas2.present();
         }
-    }
+
+        // set background black
+        canvas0.set_draw_color(sdl2::pixels::Color::BLACK);
+        canvas1.set_draw_color(sdl2::pixels::Color::BLACK);
+        canvas2.set_draw_color(sdl2::pixels::Color::BLACK);
+        canvas0.clear();
+        canvas1.clear();
+        canvas2.clear();
+
+        // DRAW
+        match checkbox0.draw(&mut canvas0, &mut focus_manager) {
+            Ok(()) => {}
+            Err(msg) => {
+                debug_assert!(false, "{}", msg); // infallible in prod
+            }
+        }
+        match button1_border.draw(&mut canvas1, &mut focus_manager) {
+            Ok(()) => {}
+            Err(msg) => {
+                debug_assert!(false, "{}", msg); // infallible in prod
+            }
+        }
+        match widget_complete_2.draw(&mut canvas2, &mut focus_manager) {
+            Ok(()) => {}
+            Err(msg) => {
+                debug_assert!(false, "{}", msg); // infallible in prod
+            }
+        }
+
+        canvas0.present();
+        canvas1.present();
+        canvas2.present();
+        false
+    });
     std::process::ExitCode::SUCCESS
 }

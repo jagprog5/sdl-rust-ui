@@ -2,7 +2,8 @@ pub mod focus;
 pub mod length;
 pub mod rect;
 pub mod render;
-pub(crate) mod rust;
+pub mod rust;
+pub(crate) mod shuffle;
 
 // this module is not disabled when sdl-ttf is disabled - the traits are still
 // valid and can be implemented without sdl2-ttf
@@ -13,4 +14,3 @@ pub mod font;
 // they are suitably specific to each widget's needs
 #[cfg(feature = "sdl2-mixer")]
 pub mod audio;
-pub(crate) mod shuffle;

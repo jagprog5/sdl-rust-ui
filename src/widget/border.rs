@@ -172,7 +172,7 @@ impl BorderStyle for Empty {
 
 // contains a widget within a border
 pub struct Border<'sdl> {
-    pub contained: &'sdl mut dyn Widget,
+    pub contained: Box<dyn Widget + 'sdl>,
 
     /// store state for draw from update
     border_draw_pos: crate::util::rect::FRect,
@@ -186,7 +186,7 @@ pub struct Border<'sdl> {
 
 impl<'sdl> Border<'sdl> {
     pub fn new(
-        contains: &'sdl mut dyn Widget,
+        contains: Box<dyn Widget + 'sdl>,
         creator: &'sdl TextureCreator<WindowContext>,
         style: Box<dyn BorderStyle>,
     ) -> Self {
@@ -292,7 +292,7 @@ impl<'sdl> Widget for Border<'sdl> {
     fn draw(
         &mut self,
         canvas: &mut sdl2::render::WindowCanvas,
-        focus_manager: Option<&FocusManager>,
+        focus_manager: &FocusManager,
     ) -> Result<(), String> {
         self.contained.draw(canvas, focus_manager)?;
 

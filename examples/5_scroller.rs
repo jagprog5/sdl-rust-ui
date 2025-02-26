@@ -1,11 +1,10 @@
-use std::cell::Cell;
+use std::{cell::Cell, time::Duration};
 
-use rand::Rng;
-use sdl2::pixels::Color;
+use sdl2::{mouse::MouseButton, pixels::Color};
 use tiny_sdl2_gui::{
     layout::scroller::{Scroller, ScrollerSizingPolicy},
     util::{
-        focus::{CircularUID, FocusManager, PRNGBytes, RefCircularUIDCell, UID},
+        focus::{FocusID, FocusManager},
         length::PreferredPortion,
     },
     widget::{
@@ -13,7 +12,7 @@ use tiny_sdl2_gui::{
         border::{Bevel, Border, Empty, Gradient, Line},
         checkbox::{CheckBox, DefaultCheckBoxStyle},
         debug::CustomSizingControl,
-        update_gui, SDLEvent, Widget,
+        update_gui, Widget,
     },
 };
 
@@ -23,6 +22,7 @@ mod example_common;
 fn main() -> std::process::ExitCode {
     const WIDTH: u32 = 300;
     const HEIGHT: u32 = 200;
+    const MAX_DELAY: Duration = Duration::from_millis(17);
 
     let sdl_context = sdl2::init().unwrap();
     let sdl_video_subsystem = sdl_context.video().unwrap();
@@ -40,42 +40,32 @@ fn main() -> std::process::ExitCode {
 
     let checkbox_state = Cell::new(false);
 
-    let mut rng = rand::thread_rng();
-
-    let mut get_prng_bytes = || {
-        let mut bytes = [0u8; 8];
-        rng.fill(&mut bytes);
-        PRNGBytes(bytes)
-    };
-
-    let checkbox_focus_id = get_prng_bytes();
-    let checkbox_focus_id = UID::new(checkbox_focus_id);
-    let checkbox_focus_id = CircularUID::new(checkbox_focus_id);
-    let checkbox_focus_id = Cell::new(checkbox_focus_id);
-    let checkbox_focus_id = RefCircularUIDCell(&checkbox_focus_id);
     let focus_press_sound_style =
         tiny_sdl2_gui::widget::checkbox::EmptyFocusPressWidgetSoundStyle {};
 
     // there is a checkbox. it is the only element
-    let mut checkbox = CheckBox::new(
+    let checkbox = CheckBox::new(
         &checkbox_state,
-        checkbox_focus_id,
+        FocusID {
+            previous: "focus".to_owned(),
+            me: "focus".to_owned(),
+            next: "focus".to_owned(),
+        },
         Box::new(DefaultCheckBoxStyle {}),
         Box::new(focus_press_sound_style),
         &texture_creator,
     );
-    checkbox.focus_id.single_id_loop();
 
     // pad the checkbox a little bit for clarity
-    let mut checkbox_border1 = Border::new(
-        &mut checkbox,
+    let checkbox_border1 = Border::new(
+        Box::new(checkbox),
         &texture_creator,
         Box::new(Empty { width: 5 }),
     );
 
     // contain the checkbox and padding in a border
     let mut checkbox_border2 = Border::new(
-        &mut checkbox_border1,
+        Box::new(checkbox_border1),
         &texture_creator,
         Box::new(Line::default()),
     );
@@ -90,7 +80,7 @@ fn main() -> std::process::ExitCode {
         true,
         &inner_scroll_x,
         &inner_scroll_y,
-        &mut checkbox_border2,
+        Box::new(checkbox_border2),
     );
     let mut sizing = CustomSizingControl::default();
     sizing.preferred_w = PreferredPortion(0.8);
@@ -98,8 +88,8 @@ fn main() -> std::process::ExitCode {
     inner_scroller4.sizing_policy = ScrollerSizingPolicy::Custom(sizing, Default::default());
 
     // contain all of the above in a border
-    let mut inner_content_border5 = Border::new(
-        &mut inner_scroller4,
+    let inner_content_border5 = Border::new(
+        Box::new(inner_scroller4),
         &texture_creator,
         Box::new(Gradient::default()),
     );
@@ -112,14 +102,14 @@ fn main() -> std::process::ExitCode {
         true,
         &outer_scroll_x,
         &outer_scroll_y,
-        &mut inner_content_border5,
+        Box::new(inner_content_border5),
     );
     outer_scroller6.sizing_policy = ScrollerSizingPolicy::Custom(sizing, Default::default());
     outer_scroller6.restrict_scroll = false;
 
     // contain all of the above in a border
     let mut outer_content_border7 = Border::new(
-        &mut outer_scroller6,
+        Box::new(outer_scroller6),
         &texture_creator,
         Box::new(Bevel::default()),
     );
@@ -147,65 +137,63 @@ fn main() -> std::process::ExitCode {
     content_background9.sizing_policy =
         BackgroundSizingPolicy::Custom(CustomSizingControl::default());
 
-    let mut events_accumulator: Vec<SDLEvent> = Vec::new();
-    'running: loop {
-        for event in event_pump.poll_iter() {
-            match event {
-                sdl2::event::Event::Quit { .. } => {
-                    break 'running;
-                }
-                _ => {
-                    events_accumulator.push(SDLEvent::new(event));
-                }
+    example_common::gui_loop::gui_loop(MAX_DELAY, &mut event_pump, |events| {
+        // UPDATE
+        match update_gui(
+            &mut content_background9,
+            events,
+            &mut focus_manager,
+            &canvas,
+        ) {
+            Ok(()) => {}
+            Err(msg) => {
+                debug_assert!(false, "{}", msg); // infallible in prod
             }
-        }
+        };
 
-        let empty = events_accumulator.is_empty(); // lower cpu usage when idle
+        FocusManager::default_start_focus_behavior(&mut focus_manager, events, "focus", "focus");
 
-        if !empty {
-            match update_gui(
-                &mut content_background9,
-                &mut events_accumulator,
-                Some(&mut focus_manager),
-                &canvas,
-            ) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
+        // after gui update, use whatever is left
+        for e in events.iter_mut().filter(|e| e.available()) {
+            match e.e {
+                sdl2::event::Event::MouseButtonUp {
+                    x,
+                    y,
+                    mouse_btn: MouseButton::Left,
+                    ..
+                } => {
+                    e.set_consumed(); // intentional redundant
+                    println!("nothing consumed the click! {:?}", (x, y));
                 }
-            };
-            FocusManager::default_start_focus_behavior(
-                &mut focus_manager,
-                &mut events_accumulator,
-                checkbox_focus_id.uid(),
-                checkbox_focus_id.uid(),
-            );
-            for e in events_accumulator.iter_mut().filter(|e| e.available()) {
-                if let sdl2::event::Event::KeyDown {
-                        keycode: Some(sdl2::keyboard::Keycode::Escape),
-                        repeat,
-                        ..
-                    } = e.e {
+                sdl2::event::Event::KeyDown {
+                    keycode: Some(sdl2::keyboard::Keycode::Escape),
+                    repeat,
+                    ..
+                } => {
                     // if unprocessed escape key
                     e.set_consumed(); // intentional redundant
                     if repeat {
                         continue;
                     }
-                    break 'running;
+                    return true;
                 }
+                _ => {}
             }
-            events_accumulator.clear(); // clear after use
-
-            canvas.set_draw_color(Color::BLACK);
-            canvas.clear();
-            match content_background9.draw(&mut canvas, Some(&mut focus_manager)) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
-                }
-            }
-            canvas.present();
         }
-    }
+
+        // set background black
+        canvas.set_draw_color(sdl2::pixels::Color::BLACK);
+        canvas.clear();
+
+        // DRAW
+        match &mut content_background9.draw(&mut canvas, &mut focus_manager) {
+            Ok(()) => {}
+            Err(msg) => {
+                debug_assert!(false, "{}", msg); // infallible in prod
+            }
+        }
+        canvas.present();
+        false
+    });
     std::process::ExitCode::SUCCESS
 }

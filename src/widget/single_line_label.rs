@@ -1,6 +1,3 @@
-use std::cell::Cell;
-
-use compact_str::CompactString;
 use sdl2::{render::TextureCreator, video::WindowContext};
 
 use crate::util::focus::FocusManager;
@@ -10,6 +7,7 @@ use crate::util::length::{
     MinLenFailPolicy, MinLenPolicy, PreferredPortion,
 };
 
+use crate::util::rust::CellRefOrCell;
 use crate::widget::texture::AspectRatioFailPolicy;
 
 use super::texture::texture_draw;
@@ -17,7 +15,7 @@ use super::{Widget, WidgetUpdateEvent};
 
 /// caches the texture and what was used to create the texture
 pub(crate) struct SingleLineLabelCache<'sdl> {
-    pub text_rendered: CompactString,
+    pub text_rendered: String,
     pub properties_rendered: TextRenderProperties,
     pub texture: sdl2::render::Texture<'sdl>,
 }
@@ -27,7 +25,7 @@ pub(crate) struct SingleLineLabelSizeCacheData {
     /// if this changes the width needs to be recalculated
     pub point_size_used: u16,
     /// if this changes the width needs to be recalculated
-    pub text_used: CompactString,
+    pub text_used: String,
     /// the cached value
     pub size: (u32, u32),
 }
@@ -56,7 +54,7 @@ impl<'sdl> SingleLineLabelSizeCache<'sdl> {
             Some(cache) => cache, // cache is ok
             None => SingleLineLabelSizeCacheData {
                 point_size_used: point_size,
-                text_used: CompactString::from(text),
+                text_used: text.to_owned(),
                 size: self.font_interface.render_dimensions(text, point_size)?,
             },
         };
@@ -65,35 +63,11 @@ impl<'sdl> SingleLineLabelSizeCache<'sdl> {
     }
 }
 
-pub trait SingleLineLabelState {
-    /// produce a string from whatever data is being viewed
-    fn get(&self) -> CompactString;
-}
-
-impl SingleLineLabelState for CompactString {
-    fn get(&self) -> CompactString {
-        self.clone()
-    }
-}
-
-pub struct DefaultSingleLineLabelState {
-    pub inner: Cell<CompactString>,
-}
-
-impl SingleLineLabelState for DefaultSingleLineLabelState {
-    fn get(&self) -> CompactString {
-        let temp_v = self.inner.take();
-        let ret = temp_v.clone();
-        self.inner.set(temp_v);
-        ret
-    }
-}
-
 /// a widget that contains a single line of text.
 /// the font object and rendered font is cached - rendering only occurs when the
 /// text / style or dimensions change
 pub struct SingleLineLabel<'sdl, 'state> {
-    pub text: &'state dyn SingleLineLabelState,
+    pub text: CellRefOrCell<'state, String>,
     pub text_properties: SingleLineTextRenderType,
     font_interface: Box<dyn SingleLineFontStyle<'sdl> + 'sdl>,
 
@@ -124,7 +98,7 @@ pub struct SingleLineLabel<'sdl, 'state> {
 
 impl<'sdl, 'state> SingleLineLabel<'sdl, 'state> {
     pub fn new(
-        text: &'state dyn SingleLineLabelState,
+        text: CellRefOrCell<'state, String>,
         text_properties: SingleLineTextRenderType,
         font_interface: Box<dyn SingleLineFontStyle<'sdl> + 'sdl>,
         creator: &'sdl TextureCreator<WindowContext>,
@@ -159,9 +133,8 @@ impl<'sdl, 'state> SingleLineLabel<'sdl, 'state> {
 
 impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
     fn min(&mut self) -> Result<(MinLen, MinLen), String> {
-        let size = self
-            .ratio_cache
-            .get_size(u16::MAX, self.text.get().as_str())?;
+        let text = self.text.scope_take();
+        let size = self.ratio_cache.get_size(u16::MAX, text.as_str())?;
         let ratio = size.0 as f32 / size.1 as f32;
         let min_w = AspectRatioPreferredDirection::width_from_height(ratio, self.min_h.0);
         Ok((MinLen(min_w), self.min_h))
@@ -176,9 +149,15 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
     }
 
     fn max(&mut self) -> Result<(MaxLen, MaxLen), String> {
-        let size = self
-            .ratio_cache
-            .get_size(u16::MAX, self.text.get().as_str())?;
+        let text = self.text.take();
+        let size = match self.ratio_cache.get_size(u16::MAX, text.as_str()) {
+            Ok(size) => size,
+            Err(err) => {
+                self.text.set(text);
+                return Err(err);
+            }
+        };
+        self.text.set(text);
         let ratio = size.0 as f32 / size.1 as f32;
         let max_w = AspectRatioPreferredDirection::width_from_height(ratio, self.max_h.0);
         Ok((MaxLen(max_w), self.max_h))
@@ -200,9 +179,10 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
         if !self.request_aspect_ratio {
             return None;
         }
+        let text = self.text.scope_take();
         let pref_size = match self
             .ratio_cache
-            .get_size(u16::MAX, self.text.get().as_str())
+            .get_size(u16::MAX, text.as_str())
         {
             Ok(v) => v,
             Err(err) => return Some(Err(err)),
@@ -217,9 +197,10 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
         if !self.request_aspect_ratio {
             return None;
         }
+        let text = self.text.scope_take();
         let pref_size = match self
             .ratio_cache
-            .get_size(u16::MAX, self.text.get().as_str())
+            .get_size(u16::MAX, text.as_str())
         {
             Ok(v) => v,
             Err(err) => return Some(Err(err)),
@@ -244,7 +225,7 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
     fn draw(
         &mut self,
         canvas: &mut sdl2::render::WindowCanvas,
-        _focus_manager: Option<&FocusManager>,
+        _focus_manager: &FocusManager,
     ) -> Result<(), String> {
         let position: sdl2::rect::Rect = match self.draw_pos.into() {
             Some(v) => v,
@@ -255,10 +236,11 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
 
         let height_option_1 = position.height();
 
+        let text = self.text.scope_take();
         let height_option_2 = {
             let pref_size = match self
                 .ratio_cache
-                .get_size(u16::MAX, self.text.get().as_str())
+                .get_size(u16::MAX, text.as_str())
             {
                 Ok(v) => v,
                 Err(err) => return Err(err),
@@ -289,19 +271,18 @@ impl<'sdl, 'state> Widget for SingleLineLabel<'sdl, 'state> {
         }
 
         let cache = match self.cache.take().filter(|cache| {
-            cache.text_rendered == self.text.get().as_str()
+            cache.text_rendered == text.as_str()
                 && cache.properties_rendered == properties
         }) {
             Some(cache) => cache,
             None => {
                 // if the text of the render properties have changed, then the
                 // text needs to be re-rendered
-                let text = self.text.get();
                 let texture =
                     self.font_interface
                         .render(text.as_str(), &properties, self.creator)?;
                 SingleLineLabelCache {
-                    text_rendered: text,
+                    text_rendered: text.to_string(),
                     texture,
                     properties_rendered: properties,
                 }

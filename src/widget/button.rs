@@ -1,7 +1,7 @@
 use sdl2::render::TextureCreator;
 use sdl2::video::WindowContext;
 
-use crate::util::focus::{FocusManager, RefCircularUIDCell};
+use crate::util::focus::{FocusID, FocusManager};
 use crate::util::length::{MaxLen, MinLen};
 
 use super::checkbox::{FocusPressWidgetSoundStyle, TextureVariantSizeCache, TextureVariantStyle};
@@ -17,9 +17,10 @@ pub enum ButtonTextureVariant {
     FocusedPressed,
 }
 
-/// a default provided check box style
+// a button style which contains a label and draws a focus border with lines on
+// top of that
 #[cfg(feature = "sdl2-ttf")]
-pub struct DefaultButtonStyle<'sdl, 'state> {
+pub struct LabelButtonStyle<'sdl, 'state> {
     pub label: SingleLineLabel<'sdl, 'state>,
 }
 
@@ -32,7 +33,7 @@ pub trait ButtonStyle<TVariant>: TextureVariantStyle<TVariant> {
 }
 
 #[cfg(feature = "sdl2-ttf")]
-impl<'sdl, 'state> ButtonStyle<ButtonTextureVariant> for DefaultButtonStyle<'sdl, 'state> {
+impl<'sdl, 'state> ButtonStyle<ButtonTextureVariant> for LabelButtonStyle<'sdl, 'state> {
     fn as_mut_widget(&mut self) -> &mut dyn Widget {
         &mut self.label
     }
@@ -49,7 +50,7 @@ impl<'sdl, 'state> ButtonStyle<ButtonTextureVariant> for DefaultButtonStyle<'sdl
 }
 
 #[cfg(feature = "sdl2-ttf")]
-impl<'sdl, 'state> TextureVariantStyle<ButtonTextureVariant> for DefaultButtonStyle<'sdl, 'state> {
+impl<'sdl, 'state> TextureVariantStyle<ButtonTextureVariant> for LabelButtonStyle<'sdl, 'state> {
     fn draw(
         &mut self,
         variant: ButtonTextureVariant,
@@ -116,7 +117,7 @@ impl<'sdl, 'state> TextureVariantStyle<ButtonTextureVariant> for DefaultButtonSt
             },
             aspect_ratio_priority: Default::default(),
             events: Default::default(),
-            focus_manager: None,
+            focus_manager: &mut FocusManager::default(), // dummy
             clipping_rect: sdl2::render::ClippingRect::None,
             // does not matter, as the window_id is used to filter relevant
             // events and no events are being passed in
@@ -128,7 +129,7 @@ impl<'sdl, 'state> TextureVariantStyle<ButtonTextureVariant> for DefaultButtonSt
             Err(e) => return Err(e),
         };
 
-        match self.label.draw(canvas, None) {
+        match self.label.draw(canvas, &FocusManager::default()) {
             Ok(()) => (),
             Err(e) => return Err(e),
         };
@@ -139,7 +140,7 @@ impl<'sdl, 'state> TextureVariantStyle<ButtonTextureVariant> for DefaultButtonSt
 
 pub struct Button<'sdl, 'state> {
     pub functionality: Box<dyn FnMut() -> Result<(), String> + 'state>,
-    pub focus_id: RefCircularUIDCell<'sdl>,
+    pub focus_id: FocusID,
     /// internal state for drawing
     pressed: bool,
     /// hovered is only used if no focus manager is available
@@ -164,7 +165,7 @@ pub struct Button<'sdl, 'state> {
 impl<'sdl, 'state> Button<'sdl, 'state> {
     pub fn new(
         functionality: Box<dyn FnMut() -> Result<(), String> + 'state>,
-        focus_id: RefCircularUIDCell<'sdl>,
+        focus_id: FocusID,
         style: Box<dyn ButtonStyle<ButtonTextureVariant> + 'sdl>,
         sounds: Box<dyn FocusPressWidgetSoundStyle + 'sdl>,
         creator: &'sdl TextureCreator<WindowContext>,
@@ -246,7 +247,7 @@ impl<'sdl, 'state> Widget for Button<'sdl, 'state> {
             &mut self.hovered,
             &mut self.pressed,
             &mut self.focused_previous_frame,
-            self.focus_id.0.get(),
+            &self.focus_id,
             event,
             fun,
             self.sounds.as_mut(),
@@ -261,7 +262,7 @@ impl<'sdl, 'state> Widget for Button<'sdl, 'state> {
     fn draw(
         &mut self,
         canvas: &mut sdl2::render::WindowCanvas,
-        focus_manager: Option<&FocusManager>,
+        focus_manager: &FocusManager,
     ) -> Result<(), String> {
         let position: sdl2::rect::Rect = match self.draw_pos.into() {
             Some(v) => v,
@@ -270,9 +271,7 @@ impl<'sdl, 'state> Widget for Button<'sdl, 'state> {
             None => return Ok(()),
         };
 
-        let focused = focus_manager
-            .map(|f| f.is_focused(self.focus_id.uid()))
-            .unwrap_or(false);
+        let focused = focus_manager.is_focused(&self.focus_id);
         let pressed = self.pressed;
 
         let variant = if focused || self.hovered {

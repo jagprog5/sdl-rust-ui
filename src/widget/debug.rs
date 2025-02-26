@@ -171,7 +171,7 @@ impl Widget for Debug {
     fn draw(
         &mut self,
         canvas: &mut sdl2::render::WindowCanvas,
-        _focus_manager: Option<&FocusManager>,
+        _focus_manager: &FocusManager,
     ) -> Result<(), String> {
         // as always, snap to integer grid before rendering / using,
         // plus checks that draw area is non-zero

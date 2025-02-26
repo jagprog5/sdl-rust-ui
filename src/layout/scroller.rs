@@ -119,7 +119,7 @@ pub struct Scroller<'sdl, 'state> {
     pub scroll_y_enabled: bool,
     pub scroll_x: &'state Cell<i32>,
     pub scroll_y: &'state Cell<i32>,
-    pub contained: &'sdl mut dyn Widget,
+    pub contained: Box<dyn Widget + 'sdl>,
     pub sizing_policy: ScrollerSizingPolicy,
     /// true restricts the scrolling to keep the contained in frame
     pub restrict_scroll: bool,
@@ -138,7 +138,7 @@ impl<'sdl, 'state> Scroller<'sdl, 'state> {
         scroll_y_enabled: bool,
         scroll_x: &'state Cell<i32>,
         scroll_y: &'state Cell<i32>,
-        contains: &'sdl mut dyn Widget,
+        contains: Box<dyn Widget + 'sdl>,
     ) -> Self {
         Self {
             drag_state: DragState::None,
@@ -380,7 +380,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
                     ScrollAspectRatioDirectionPolicy::Inherit => event.aspect_ratio_priority,
                     ScrollAspectRatioDirectionPolicy::Literal(dir) => *dir,
                 };
-                place(self.contained, event.position, dir)?
+                place(self.contained.as_mut(), event.position, dir)?
             }
         };
 
@@ -628,7 +628,7 @@ impl<'sdl, 'state> Widget for Scroller<'sdl, 'state> {
     fn draw(
         &mut self,
         canvas: &mut sdl2::render::WindowCanvas,
-        focus_manager: Option<&FocusManager>,
+        focus_manager: &FocusManager,
     ) -> Result<(), String> {
         debug_assert!(canvas.clip_rect() == self.previous_clipping_rect_from_update);
         canvas.set_clip_rect(clipping_rect_intersection(

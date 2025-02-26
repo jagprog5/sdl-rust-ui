@@ -95,12 +95,7 @@ impl SDLEvent {
 
 pub struct WidgetUpdateEvent<'sdl> {
     /// stores state indicating which widget has focus  
-    /// none if this widget isn't inserted in a context which is focusable. for
-    /// example, a label contained in a button is not focusable (the parent
-    /// button is instead).  
-    /// or alternatively, the focus manager is None if None is passed to
-    /// update_gui (because the user of this lib doesn't care about focus)
-    pub focus_manager: Option<&'sdl mut FocusManager>,
+    pub focus_manager: &'sdl mut FocusManager,
     /// the position that this widget is at. this is NOT an sdl2::rect::FRect
     // it's important to keep the sizing as floats as the sizing is being
     // computed.
@@ -118,7 +113,8 @@ pub struct WidgetUpdateEvent<'sdl> {
     /// which window is being update
     pub window_id: u32,
     /// in the context of where this widget is in the GUI, does the width or the
-    /// height have priority in regard to enforcing an aspect ratio
+    /// height have priority in regard to enforcing an aspect ratio. one length
+    /// is figured out first, the the other is calculated based on the first
     pub aspect_ratio_priority: AspectRatioPreferredDirection,
     /// handle all events from sdl. contains events in order of occurrence
     pub events: &'sdl mut [SDLEvent],
@@ -131,7 +127,7 @@ impl<'sdl> WidgetUpdateEvent<'sdl> {
         WidgetUpdateEvent {
             // do a re-borrow. create a mutable borrow of the mutable borrow
             // output lifetime is elided - it's the re-borrowed lifetime
-            focus_manager: self.focus_manager.as_mut().map(|f| reborrow(*f)),
+            focus_manager: reborrow(self.focus_manager),
             position,
             clipping_rect: self.clipping_rect,
             window_id: self.window_id,
@@ -223,18 +219,15 @@ pub trait Widget {
     fn draw(
         &mut self,
         canvas: &mut WindowCanvas,
-        focus_manager: Option<&FocusManager>,
+        focus_manager: &FocusManager,
     ) -> Result<(), String>;
 }
 
-/// update the gui. returns a rect that should be passed to draw.
-/// between update and draw, the canvas's size should not change
-///
 /// each frame after update_gui, the widget should be drawn with widget.draw()
 pub fn update_gui(
     widget: &mut dyn Widget,
     events: &mut [SDLEvent],
-    focus_manager: Option<&mut FocusManager>,
+    focus_manager: &mut FocusManager,
     canvas: &WindowCanvas,
 ) -> Result<(), String> {
     let (w, h) = match canvas.output_size() {

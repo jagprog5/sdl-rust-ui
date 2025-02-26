@@ -1,6 +1,5 @@
 use std::cell::Cell;
 
-use compact_str::CompactString;
 use sdl2::{
     keyboard::{Keycode, Mod},
     pixels::{Color, PixelFormatEnum},
@@ -10,38 +9,12 @@ use sdl2::{
 };
 
 use crate::util::{
-    focus::{FocusManager, RefCircularUIDCell, WidgetEventFocusSubset},
+    focus::{DefaultFocusBehaviorArg, FocusID, FocusManager},
     font::{SingleLineFontStyle, SingleLineTextRenderType, TextRenderProperties},
-    length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy, PreferredPortion},
+    length::{MaxLen, MaxLenFailPolicy, MinLen, MinLenFailPolicy, PreferredPortion}, rust::CellRefOrCell,
 };
 
 use super::{single_line_label::SingleLineLabelCache, Widget, WidgetUpdateEvent};
-
-pub trait SingleLineTextEditState {
-    /// produce a string from whatever data is being viewed
-    fn get(&self) -> CompactString;
-
-    /// used to provide internal mutability on the contained data. could be used
-    /// to append, etc
-    fn set(&self, new: CompactString);
-}
-
-pub struct DefaultSingleLineTextEditState {
-    pub inner: Cell<CompactString>,
-}
-
-impl SingleLineTextEditState for DefaultSingleLineTextEditState {
-    fn get(&self) -> CompactString {
-        let temp_v = self.inner.take();
-        let ret = temp_v.clone();
-        self.inner.set(temp_v);
-        ret
-    }
-
-    fn set(&self, new: CompactString) {
-        self.inner.set(new);
-    }
-}
 
 pub trait SingleLineTextEditStyle {
     /// The texture will be redrawn only if the target dimensions change.
@@ -155,7 +128,7 @@ impl SingleLineTextEditStyle for DefaultSingleLineEditStyle {
 struct TextureVariantSizeCache<'sdl> {
     pub cache: Option<sdl2::render::Texture<'sdl>>,
     /// if this changes, the cache needs to be recomputed
-    pub text_used: CompactString,
+    pub text_used: String,
 }
 
 impl<'sdl> Default for TextureVariantSizeCache<'sdl> {
@@ -177,7 +150,7 @@ impl<'sdl> TextureVariantSizeCache<'sdl> {
         style: &mut dyn SingleLineTextEditStyle,
         focused: bool,
         size: (u32, u32),
-        text: CompactString,
+        text: &str,
         creator: &'sdl TextureCreator<WindowContext>,
         canvas: &mut Canvas<Window>,
         caret_position: f32,
@@ -208,7 +181,7 @@ impl<'sdl> TextureVariantSizeCache<'sdl> {
                 if let Some(e) = e_out {
                     return Err(e);
                 }
-                self.text_used = text;
+                self.text_used = text.to_owned();
                 texture
             }
         };
@@ -283,7 +256,7 @@ pub struct SingleLineTextInput<'sdl, 'state> {
     /// what happens when return key pressed
     pub functionality: Box<dyn FnMut() -> Result<(), String> + 'state>,
 
-    pub focus_id: RefCircularUIDCell<'sdl>,
+    pub focus_id: FocusID,
     /// internal state for sound
     focused_previous_frame: bool,
     /// internal state for sound - limit with many type sounds at once
@@ -297,7 +270,7 @@ pub struct SingleLineTextInput<'sdl, 'state> {
     focused: TextureVariantSizeCache<'sdl>,
     not_focused: TextureVariantSizeCache<'sdl>,
 
-    pub text: &'state dyn SingleLineTextEditState,
+    pub text: CellRefOrCell<'state, String>,
     pub text_properties: SingleLineTextRenderType,
     font_interface: Box<dyn SingleLineFontStyle<'sdl> + 'sdl>,
 
@@ -320,8 +293,8 @@ impl<'sdl, 'state> SingleLineTextInput<'sdl, 'state> {
         functionality: Box<dyn FnMut() -> Result<(), String> + 'state>,
         style: Box<dyn SingleLineTextEditStyle + 'sdl>,
         sounds: Box<dyn SingleLineTextInputSoundStyle + 'sdl>,
-        focus_id: RefCircularUIDCell<'sdl>,
-        text: &'state dyn SingleLineTextEditState,
+        focus_id: FocusID,
+        text: CellRefOrCell<'state, String>,
         text_properties: SingleLineTextRenderType,
         font_interface: Box<dyn SingleLineFontStyle<'sdl> + 'sdl>,
         creator: &'sdl TextureCreator<WindowContext>,
@@ -381,27 +354,15 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
         (self.preferred_w, self.preferred_h)
     }
 
-    fn update(&mut self, mut event: WidgetUpdateEvent) -> Result<(), String> {
+    fn update(&mut self, event: WidgetUpdateEvent) -> Result<(), String> {
         self.draw_pos = event.position;
 
         // keys:
         // - only applicable if currently focused
         // - consume key event once used
 
-        let focus_manager = match &mut event.focus_manager {
-            Some(v) => v,
-            None => {
-                // a single line text input simply cannot function properly
-                // without a focus manager. this is unlike a button or checkbox,
-                // which still can be pressed and hovered with the mouse and
-                // while not focused
-                debug_assert!(false);
-                return Ok(());
-            }
-        };
-
         // detect rising edge of focus, for sound playing
-        let mut previously_focused = focus_manager.is_focused(self.focus_id.uid());
+        let mut previously_focused = event.focus_manager.is_focused(&self.focus_id);
 
         if previously_focused && !self.focused_previous_frame {
             // detect if focus was sent to this widget for any reason by
@@ -412,9 +373,9 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
 
         for sdl_event in event.events.iter_mut().filter(|event| event.available()) {
             FocusManager::default_widget_focus_behavior(
-                self.focus_id.0.get(),
-                WidgetEventFocusSubset {
-                    focus_manager,
+                &self.focus_id,
+                DefaultFocusBehaviorArg {
+                    focus_manager: event.focus_manager,
                     position: event.position,
                     event: sdl_event,
                     clipping_rect: event.clipping_rect,
@@ -422,7 +383,7 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                 },
             );
 
-            if !focus_manager.is_focused(self.focus_id.uid()) {
+            if !event.focus_manager.is_focused(&self.focus_id) {
                 // keys:
                 // - only applicable if currently focused
                 // - consume key event once used
@@ -440,9 +401,6 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
             }
 
             static SOUND_LIMITER: u32 = 50; // too frequent sounds bad
-
-            // fix repeat logic
-            // fix consume_event logic
 
             let (consume_event, maybe_err): (bool, Option<String>) = (|| {
                 match &mut sdl_event.e {
@@ -476,8 +434,8 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                         timestamp,
                         ..
                     } => {
-                        let mut content = self.text.get();
-                        if !content.is_empty()
+                        let mut text = self.text.scope_take();
+                        if !text.is_empty()
                             && timestamp
                                 .checked_sub(self.previous_text_input_timestamp)
                                 .unwrap_or(SOUND_LIMITER)
@@ -492,11 +450,10 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                             }
                         }
                         if keymod.contains(Mod::LCTRLMOD) || keymod.contains(Mod::RCTRLMOD) {
-                            content.clear();
+                            text.clear();
                         } else {
-                            content.pop();
+                            text.pop();
                         }
-                        self.text.set(content);
                         (true, None)
                     }
                     // if text is typed then append it to the text. a text input
@@ -518,9 +475,8 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
                             }
                         }
 
-                        let mut content = self.text.get();
-                        content += text;
-                        self.text.set(content);
+                        let mut content = self.text.scope_take();
+                        *content += text;
                         (true, None)
                     }
                     _ => {
@@ -540,7 +496,7 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
             }
         }
 
-        self.focused_previous_frame = focus_manager.is_focused(self.focus_id.uid());
+        self.focused_previous_frame = event.focus_manager.is_focused(&self.focus_id);
 
         Ok(())
     }
@@ -553,7 +509,7 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
     fn draw(
         &mut self,
         canvas: &mut sdl2::render::WindowCanvas,
-        focus_manager: Option<&FocusManager>,
+        focus_manager: &FocusManager,
     ) -> Result<(), String> {
         let position: sdl2::rect::Rect = match self.draw_pos.into() {
             Some(v) => v,
@@ -577,20 +533,21 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
             canvas.fill_rect(position)?;
         }
 
+        let text = self.text.scope_take();
+
         let cache = match self.cache.take().filter(|cache| {
-            cache.text_rendered == self.text.get().as_str()
+            cache.text_rendered == text.as_str()
                 && cache.properties_rendered == properties
         }) {
             Some(cache) => cache,
             None => {
                 // if the text of the render properties have changed, then the
                 // text needs to be re-rendered
-                let text = self.text.get();
                 let texture =
                     self.font_interface
                         .render(text.as_str(), &properties, self.creator)?;
                 SingleLineLabelCache {
-                    text_rendered: text,
+                    text_rendered: text.to_string(),
                     texture,
                     properties_rendered: properties,
                 }
@@ -668,9 +625,7 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
         self.cache = Some(cache);
 
         // apply the style
-        let focused = focus_manager
-            .map(|f| f.is_focused(self.focus_id.uid()))
-            .unwrap_or(false);
+        let focused = focus_manager.is_focused(&self.focus_id);
 
         let cache = if focused {
             &mut self.focused
@@ -682,7 +637,7 @@ impl<'sdl, 'state> Widget for SingleLineTextInput<'sdl, 'state> {
             self.style.as_mut(),
             focused,
             (position.width(), position.height()),
-            self.text.get(),
+            &text,
             self.creator,
             canvas,
             match caret_position {

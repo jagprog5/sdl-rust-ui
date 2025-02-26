@@ -44,6 +44,7 @@ impl Default for AspectRatioFailPolicy {
 
 /// widget for a static sdl2 texture
 pub struct Texture<'sdl> {
+    // use unsafe textures instead!
     pub texture: &'sdl sdl2::render::Texture<'sdl>,
     /// none means use the entire texture
     pub texture_src: Option<sdl2::rect::Rect>,
@@ -198,7 +199,7 @@ impl<'sdl> Widget for Texture<'sdl> {
     fn draw(
         &mut self,
         canvas: &mut sdl2::render::WindowCanvas,
-        _focus_manager: Option<&FocusManager>,
+        _focus_manager: &FocusManager,
     ) -> Result<(), String> {
         texture_draw(
             self.texture,

@@ -5,7 +5,7 @@ use crate::{util::focus::FocusManager, widget::Widget};
 /// contains something. when it is draw, a clipping rect is set to not allow
 /// drawing to go past the widget's given position
 pub struct Clipper<'sdl> {
-    pub contained: &'sdl mut dyn Widget,
+    pub contained: Box<dyn Widget + 'sdl>,
     /// calculated during update, stored for draw.
     ///
     /// this is the clipping rect that should be applied before drawing
@@ -13,7 +13,7 @@ pub struct Clipper<'sdl> {
 }
 
 impl<'sdl> Clipper<'sdl> {
-    pub fn new(contained: &'sdl mut dyn Widget) -> Self {
+    pub fn new(contained: Box<dyn Widget + 'sdl>) -> Self {
         Self {
             contained,
             update_clip_rect: ClippingRect::None, // doesn't matter here
@@ -73,7 +73,7 @@ impl<'sdl> Widget for Clipper<'sdl> {
     fn draw(
         &mut self,
         canvas: &mut sdl2::render::WindowCanvas,
-        focus_manager: Option<&FocusManager>,
+        focus_manager: &FocusManager,
     ) -> Result<(), String> {
         let previous_clipping_rect = canvas.clip_rect();
         canvas.set_clip_rect(self.update_clip_rect);

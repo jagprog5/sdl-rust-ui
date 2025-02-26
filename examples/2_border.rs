@@ -1,10 +1,13 @@
-use example_common::fancy_surface;
+use std::time::Duration;
+
+use example_common::{fancy_surface, gui_loop::gui_loop};
+use sdl2::mouse::MouseButton;
 use tiny_sdl2_gui::{
-    util::length::{MinLen, MinLenPolicy},
+    util::{focus::FocusManager, length::{MinLen, MinLenPolicy}},
     widget::{
         border::{Bevel, Border},
         texture::{AspectRatioFailPolicy, Texture},
-        update_gui, SDLEvent, Widget,
+        update_gui, Widget,
     },
 };
 
@@ -14,6 +17,9 @@ mod example_common;
 fn main() -> std::process::ExitCode {
     const WIDTH: u32 = 400;
     const HEIGHT: u32 = 400;
+    const MAX_DELAY: Duration = Duration::from_millis(17);
+
+    let mut focus_manager = FocusManager::default();
 
     let sdl_context = sdl2::init().unwrap();
     let sdl_video_subsystem = sdl_context.video().unwrap();
@@ -39,57 +45,63 @@ fn main() -> std::process::ExitCode {
 
     let mut bevel = Bevel::default();
     bevel.width = 10;
-    let mut border = Border::new(&mut texture_widget, &texture_creator, Box::new(bevel));
+    let mut border = Border::new(Box::new(texture_widget), &texture_creator, Box::new(bevel));
 
-    let mut events_accumulator: Vec<SDLEvent> = Vec::new();
-    'running: loop {
-        for event in event_pump.poll_iter() {
-            match event {
-                sdl2::event::Event::Quit { .. } => {
-                    break 'running;
-                }
-                _ => {
-                    events_accumulator.push(SDLEvent::new(event));
-                }
+    gui_loop(MAX_DELAY, &mut event_pump, |events| {
+        // UPDATE
+        match update_gui(
+            &mut border,
+            events,
+            &mut focus_manager,
+            &canvas,
+        ) {
+            Ok(()) => {}
+            Err(msg) => {
+                debug_assert!(false, "{}", msg); // infallible in prod
             }
-        }
+        };
 
-        let empty = events_accumulator.is_empty(); // lower cpu usage when idle
-
-        if !empty {
-            match update_gui(&mut border, &mut events_accumulator, None, &canvas) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
+        // after gui update, use whatever is left
+        for e in events.iter_mut().filter(|e| e.available()) {
+            match e.e {
+                sdl2::event::Event::MouseButtonUp {
+                    x,
+                    y,
+                    mouse_btn: MouseButton::Left,
+                    ..
+                } => {
+                    e.set_consumed(); // intentional redundant
+                    println!("nothing consumed the click! {:?}", (x, y));
                 }
-            };
-            for e in events_accumulator.iter_mut().filter(|e| e.available()) {
-                if let sdl2::event::Event::KeyDown {
-                        keycode: Some(sdl2::keyboard::Keycode::Escape),
-                        repeat,
-                        ..
-                    } = e.e {
+                sdl2::event::Event::KeyDown {
+                    keycode: Some(sdl2::keyboard::Keycode::Escape),
+                    repeat,
+                    ..
+                } => {
                     // if unprocessed escape key
                     e.set_consumed(); // intentional redundant
                     if repeat {
                         continue;
                     }
-                    break 'running;
+                    return true;
                 }
+                _ => {}
             }
-            events_accumulator.clear(); // clear after use
-
-            // set background black
-            canvas.set_draw_color(sdl2::pixels::Color::BLACK);
-            canvas.clear();
-            match border.draw(&mut canvas, None) {
-                Ok(()) => {}
-                Err(msg) => {
-                    debug_assert!(false, "{}", msg); // infallible in prod
-                }
-            }
-            canvas.present();
         }
-    }
+
+        // set background black
+        canvas.set_draw_color(sdl2::pixels::Color::BLACK);
+        canvas.clear();
+
+        // DRAW
+        match &mut border.draw(&mut canvas, &focus_manager) {
+            Ok(()) => {}
+            Err(msg) => {
+                debug_assert!(false, "{}", msg); // infallible in prod
+            }
+        }
+        canvas.present();
+        false
+    });
     std::process::ExitCode::SUCCESS
 }

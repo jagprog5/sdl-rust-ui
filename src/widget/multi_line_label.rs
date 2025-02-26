@@ -4,29 +4,10 @@ use crate::util::{
     focus::FocusManager,
     font::MultiLineFontStyle,
     length::{MaxLenFailPolicy, MinLenFailPolicy, PreferredPortion},
-    rect::rect_len_round,
+    rect::rect_len_round, rust::CellRefOrCell,
 };
 
 use super::{Widget, WidgetUpdateEvent};
-
-pub trait MultiLineLabelState {
-    /// produce a string from whatever data is being viewed
-    fn get(&self) -> String;
-}
-
-impl MultiLineLabelState for String {
-    fn get(&self) -> String {
-        self.clone()
-    }
-}
-
-impl MultiLineLabelState for std::cell::Cell<String> {
-    fn get(&self) -> String {
-        let v = self.take();
-        self.set(v.clone());
-        v
-    }
-}
 
 struct MultiLineLabelCache<'sdl> {
     pub text_rendered: String,
@@ -61,7 +42,7 @@ impl Default for MultiLineMinHeightFailPolicy {
 /// the font object and rendered font is cached - rendering only occurs when the
 /// text / style or dimensions change
 pub struct MultiLineLabel<'sdl, 'state> {
-    pub text: &'state dyn MultiLineLabelState,
+    pub text: CellRefOrCell<'state, String>,
     /// a single line label infers an appropriate point size from the available
     /// height. this doesn't make sense for multiline text, so it's instead
     /// stated literally
@@ -85,7 +66,7 @@ pub struct MultiLineLabel<'sdl, 'state> {
 
 impl<'sdl, 'state> MultiLineLabel<'sdl, 'state> {
     pub fn new(
-        text: &'state dyn MultiLineLabelState,
+        text: CellRefOrCell<'state, String>,
         point_size: u16,
         color: Color,
         font_interface: Box<dyn MultiLineFontStyle<'sdl> + 'sdl>,
@@ -141,10 +122,11 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
                     Some(v) => v,
                     None => return Some(Ok(0.)), // doesn't matter
                 };
+                let text = self.text.scope_take();
                 // ok to use the same cache as draw, as once the pref_w is
                 // figured out, then that same one is used at draw as well
                 let cache = match self.cache.take().filter(|cache| {
-                    cache.text_rendered == self.text.get().as_str()
+                    cache.text_rendered == text.as_str()
                         && cache.color == self.color
                         && cache.point_size == self.point_size
                         && cache.wrap_width == pref_w
@@ -153,7 +135,6 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
                     None => {
                         // if the text of the render properties have changed, then the
                         // text needs to be re-rendered
-                        let text = self.text.get();
                         let texture = match self.font_interface.render(
                             text.as_str(),
                             self.color,
@@ -165,7 +146,7 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
                             Err(e) => return Some(Err(e)),
                         };
                         MultiLineLabelCache {
-                            text_rendered: text,
+                            text_rendered: text.to_string(),
                             point_size: self.point_size,
                             wrap_width: pref_w,
                             color: self.color,
@@ -198,15 +179,17 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
     fn draw(
         &mut self,
         canvas: &mut sdl2::render::WindowCanvas,
-        _focus_manager: Option<&FocusManager>,
+        _focus_manager: &FocusManager,
     ) -> Result<(), String> {
         let position: sdl2::rect::Rect = match self.draw_pos.into() {
             Some(v) => v,
             None => return Ok(()), // no input handling
         };
 
+        let text = self.text.scope_take();
+
         let cache = match self.cache.take().filter(|cache| {
-            cache.text_rendered == self.text.get().as_str()
+            cache.text_rendered == text.as_str()
                 && cache.color == self.color
                 && cache.point_size == self.point_size
                 && cache.wrap_width == position.width()
@@ -215,7 +198,6 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
             None => {
                 // if the text of the render properties have changed, then the
                 // text needs to be re-rendered
-                let text = self.text.get();
                 let texture = self.font_interface.render(
                     text.as_str(),
                     self.color,
@@ -224,7 +206,7 @@ impl<'sdl, 'state> Widget for MultiLineLabel<'sdl, 'state> {
                     self.creator,
                 )?;
                 MultiLineLabelCache {
-                    text_rendered: text,
+                    text_rendered: text.to_string(),
                     point_size: self.point_size,
                     wrap_width: position.width(),
                     color: self.color,

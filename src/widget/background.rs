@@ -75,7 +75,7 @@ impl<'sdl> Widget for SolidColorBackground<'sdl> {
     fn draw(
         &mut self,
         canvas: &mut sdl2::render::WindowCanvas,
-        focus_manager: Option<&FocusManager>,
+        focus_manager: &FocusManager,
     ) -> Result<(), String> {
         canvas.set_draw_color(self.color);
         let pos: Option<sdl2::rect::Rect> = self.background_draw_pos.into();
@@ -320,6 +320,8 @@ struct SoftwareRenderBackgroundCache<'sdl> {
 
 /// suitable for background coloring. for example, multiple widgets can be
 /// composed in a stacked layout.
+/// 
+/// CAREFUL! Should not drop each frame, as it will recompute.
 pub struct SoftwareRenderBackground<'sdl, Style: SoftwareRenderBackgroundStyle> {
     style: Style,
     pub contained: &'sdl mut dyn Widget,
@@ -374,7 +376,7 @@ impl<'sdl, Style: SoftwareRenderBackgroundStyle> Widget for SoftwareRenderBackgr
     fn draw(
         &mut self,
         canvas: &mut sdl2::render::WindowCanvas,
-        focus_manager: Option<&FocusManager>,
+        focus_manager: &FocusManager,
     ) -> Result<(), String> {
         let pos: Option<sdl2::rect::Rect> = self.background_draw_pos.into();
 

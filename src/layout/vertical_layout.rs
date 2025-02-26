@@ -33,7 +33,7 @@ pub(crate) fn direction_conditional_iter_mut<'a, T>(
 }
 
 pub struct VerticalLayout<'sdl> {
-    pub elems: Vec<&'sdl mut dyn Widget>,
+    pub elems: Vec<Box<dyn Widget + 'sdl>>,
     /// reverse the order IN TIME that elements are updated and drawn in. this
     /// does not affect the placement of elements in space
     pub reverse: bool,
@@ -228,7 +228,7 @@ impl<'sdl> Widget for VerticalLayout<'sdl> {
 
         if self.elems.len() == 1 {
             let position = crate::widget::place(
-                self.elems[0],
+                self.elems[0].as_mut(),
                 event.position,
                 crate::util::length::AspectRatioPreferredDirection::WidthFromHeight,
             )?;
@@ -363,7 +363,7 @@ impl<'sdl> Widget for VerticalLayout<'sdl> {
     fn draw(
         &mut self,
         canvas: &mut sdl2::render::WindowCanvas,
-        focus_manager: Option<&FocusManager>,
+        focus_manager: &FocusManager,
     ) -> Result<(), String> {
         for e in self.elems.iter_mut() {
             e.draw(canvas, focus_manager)?;
