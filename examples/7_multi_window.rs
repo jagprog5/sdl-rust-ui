@@ -42,6 +42,7 @@ fn main() -> std::process::ExitCode {
     // SDL SYSTEMS
     let sdl_context = sdl2::init().unwrap();
     let sdl_video_subsystem = sdl_context.video().unwrap();
+    sdl_video_subsystem.text_input().start();
     let mut event_pump = sdl_context.event_pump().unwrap();
     let window0 = sdl_video_subsystem
         .window("window 0", 300, 300)

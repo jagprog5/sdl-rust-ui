@@ -23,6 +23,7 @@ fn main() -> std::process::ExitCode {
 
     let sdl_context = sdl2::init().unwrap();
     let sdl_video_subsystem = sdl_context.video().unwrap();
+    sdl_video_subsystem.text_input().start();
     let window = sdl_video_subsystem
         .window("border", WIDTH, HEIGHT)
         .resizable()
