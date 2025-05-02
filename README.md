@@ -1,3 +1,5 @@
+I've moved on to [this project](https://github.com/jagprog5/game_system).
+
 # sdl-rust-ui
 
 [Video](https://youtu.be/3zBEHgBt7EQ?si=eZAg6nufy3mj0sCg)🔗
